@@ -1,0 +1,2 @@
+Error: Could not find a production build in the 'C:\Users\Dave\WorkBuddy\2026-06-06-22-15-39\ai-website-cloner\.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id
+    at ignore-listed frames

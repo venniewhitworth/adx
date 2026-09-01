@@ -1,0 +1,537 @@
+{
+  "url": "https://adxkit.com",
+  "host": "adxkit.com",
+  "screenshots": [
+    {
+      "name": "desktop",
+      "path": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\docs\\design-references\\adxkit.com-desktop-1440.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "tablet",
+      "path": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\docs\\design-references\\adxkit.com-tablet-768.png",
+      "width": 768,
+      "height": 1024
+    },
+    {
+      "name": "mobile",
+      "path": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\docs\\design-references\\adxkit.com-mobile-390.png",
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "assets": {
+    "images": [
+      {
+        "src": "https://adxkit.com/adxkit.png",
+        "alt": "adxkit系统界面展示"
+      },
+      {
+        "src": "https://adxkit.com/qrc.jpg",
+        "alt": "联系客服"
+      }
+    ],
+    "videos": [],
+    "backgroundImages": [
+      {
+        "url": "linear-gradient(135deg, rgb(247, 250, 255) 0%, rgb(239, 246, 255) 100%)",
+        "element": "SECTION.hero"
+      },
+      {
+        "url": "linear-gradient(135deg, rgb(22, 93, 255) 0%, rgb(14, 75, 219) 100%)",
+        "element": "SECTION.values"
+      },
+      {
+        "url": "linear-gradient(135deg, rgb(22, 93, 255) 0%, rgb(14, 75, 219) 100%)",
+        "element": "DIV.cta-content"
+      }
+    ],
+    "svgCount": 0,
+    "fonts": [
+      "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "Inter, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \"Helvetica Neue\", Arial, sans-serif",
+      "FontAwesome"
+    ],
+    "favicons": [
+      {
+        "href": "https://a.adxkit.com/assets/adxkit.icon-BXfaNvz9.jpg",
+        "sizes": ""
+      }
+    ],
+    "animations": [
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-outline buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary ml-12 buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-accent ml-12 buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary ml-12",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pain-point-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pain-point-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pain-point-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card feature-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card feature-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card feature-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card feature-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card highlight-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card value-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card case-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card case-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card case-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pricing-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pricing-card featured",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-accent buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "card pricing-card",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-primary buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-accent buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "btn btn-light buy-btn",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "A",
+        "classes": "",
+        "animation": "none",
+        "transition": "0.2s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "modal-overlay",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "DIV",
+        "classes": "modal-content",
+        "animation": "none",
+        "transition": "0.3s"
+      },
+      {
+        "tag": "BUTTON",
+        "classes": "modal-close",
+        "animation": "none",
+        "transition": "0.2s"
+      }
+    ]
+  },
+  "meta": {
+    "topology": {
+      "sections": [
+        {
+          "tag": "header",
+          "classes": "header",
+          "top": 0,
+          "left": 16,
+          "width": 358,
+          "height": 170,
+          "styles": {
+            "display": "block",
+            "position": "sticky",
+            "zIndex": "999"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "hero",
+          "top": 170,
+          "left": 16,
+          "width": 358,
+          "height": 1109.21875,
+          "styles": {
+            "display": "block",
+            "position": "relative",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "pain-points",
+          "top": 1279.21875,
+          "left": 16,
+          "width": 358,
+          "height": 1089.59375,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "features",
+          "top": 2368.8125,
+          "left": 16,
+          "width": 358,
+          "height": 1691.59375,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "highlights",
+          "top": 4060.40625,
+          "left": 16,
+          "width": 358,
+          "height": 2166.59375,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "values",
+          "top": 6227,
+          "left": 16,
+          "width": 358,
+          "height": 1395.59375,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "cases",
+          "top": 7622.59375,
+          "left": 16,
+          "width": 358,
+          "height": 1274.0625,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "pricing",
+          "top": 8896.65625,
+          "left": 16,
+          "width": 358,
+          "height": 2009.6875,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "section",
+          "classes": "cta",
+          "top": 10906.34375,
+          "left": 16,
+          "width": 358,
+          "height": 590,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        },
+        {
+          "tag": "footer",
+          "classes": "footer",
+          "top": 11496.34375,
+          "left": 16,
+          "width": 358,
+          "height": 1048.5625,
+          "styles": {
+            "display": "block",
+            "position": "static",
+            "zIndex": "auto"
+          }
+        }
+      ]
+    }
+  }
+}

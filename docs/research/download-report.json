@@ -1,0 +1,24 @@
+{
+  "report": {
+    "total": 3,
+    "successes": 3,
+    "failures": []
+  },
+  "results": [
+    {
+      "url": "https://a.adxkit.com/assets/adxkit.icon-BXfaNvz9.jpg",
+      "dest": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\public\\a.adxkit.com\\assets\\adxkit.icon-BXfaNvz9.jpg",
+      "ok": true
+    },
+    {
+      "url": "https://adxkit.com/qrc.jpg",
+      "dest": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\public\\adxkit.com\\qrc.jpg",
+      "ok": true
+    },
+    {
+      "url": "https://adxkit.com/adxkit.png",
+      "dest": "c:\\Users\\Dave\\WorkBuddy\\2026-06-06-22-15-39\\ai-website-cloner\\public\\adxkit.com\\adxkit.png",
+      "ok": true
+    }
+  ]
+}

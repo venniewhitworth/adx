@@ -1,0 +1,7 @@
+.env.local
+.tmp-dev-out.log
+.tmp-dev-err.log
+.local-runtime/
+node_modules/
+.next/
+data/
