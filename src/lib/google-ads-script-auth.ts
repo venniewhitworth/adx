@@ -4,7 +4,9 @@ export function assertGoogleAdsScriptAuthorized(request: Request) {
     return;
   }
 
-  const providedToken = request.headers.get("x-google-ads-script-token")?.trim();
+  const providedToken =
+    request.headers.get("x-google-ads-script-token")?.trim() ??
+    new URL(request.url).searchParams.get("scriptToken")?.trim();
   if (!providedToken || providedToken !== expectedToken) {
     throw Object.assign(new Error("Unauthorized Google Ads Script request"), { status: 401 });
   }
