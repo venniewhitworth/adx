@@ -484,7 +484,8 @@ function ScriptSetupCard({
                 <li>3. 在每条记录里填好 `Google Ads Customer ID`。</li>
                 <li>4. 再填好广告系列 ID。</li>
                 <li>5. 复制脚本，把里面的 `REPLACE_ME` 换成你的 `GOOGLE_ADS_SCRIPT_TOKEN`。</li>
-                <li>6. 先在 Google Ads Script 里点“预览”测试，确认能拉到待同步数据，再设置定时运行。</li>
+                <li>6. 这份脚本已经是兼容版，会同时用请求头和 URL 参数带上 token，专门避免部分 Google Ads Script 环境下只传 header 还会 401 的问题。</li>
+                <li>7. 先在 Google Ads Script 里点“预览”测试，确认能拉到待同步数据，再设置定时运行。</li>
               </ol>
             </div>
 
@@ -495,7 +496,7 @@ function ScriptSetupCard({
                 <li>2. 进入“工具”或“批量操作”里的 `Scripts`。</li>
                 <li>3. 新建一个脚本，把右边复制出来的模板粘进去。</li>
                 <li>4. 把脚本里的 `REPLACE_ME` 改成你的 `GOOGLE_ADS_SCRIPT_TOKEN`。</li>
-                <li>5. 先点一次“预览”或“运行”，确认脚本能拉到后台数据。</li>
+                <li>5. 保存后先点一次“预览”或“运行”，如果日志出现 `No pending suffix updates for ...`，说明鉴权已经通了，只是当前没有待同步记录。</li>
                 <li>6. 再在 Google Ads 里给这个脚本设置执行时间，比如每 15 分钟一次。</li>
               </ol>
               <p className="mt-3 text-xs leading-6 text-[#AA9E96]">
@@ -545,7 +546,7 @@ function ScriptSetupCard({
               <div>
                 <p className="text-sm font-medium text-[#5E514A]">可直接复制的脚本模板</p>
                 <p className="mt-1 text-xs text-[#AA9E96]">
-                  把 `REPLACE_ME` 换成你的 `GOOGLE_ADS_SCRIPT_TOKEN`，脚本就会自动把后缀写进 Google Ads。
+                  把 `REPLACE_ME` 换成你的 `GOOGLE_ADS_SCRIPT_TOKEN`。这份是兼容版脚本，会同时走 header 和 URL 参数鉴权。
                 </p>
               </div>
               <button

@@ -177,3 +177,11 @@ That script will:
 1. pull pending suffix updates from `/api/google-ads/pending`
 2. update Final URL suffix in Google Ads campaigns
 3. report success or failure to `/api/google-ads/report`
+
+The dashboard now generates a compatibility version of the script:
+
+- you still replace `REPLACE_ME` with `GOOGLE_ADS_SCRIPT_TOKEN`
+- the script sends the token in both the request header and the `scriptToken` URL query
+- the backend accepts both formats to avoid `401 Unauthorized Google Ads Script request` in some Google Ads Script runtimes
+
+If the script preview log says `No pending suffix updates for ...`, auth is already working and there is simply no pending record to sync yet.

@@ -251,10 +251,12 @@ REFRESH_DUE_POLL_INTERVAL_MS=30000
 3. 展开 `Google Ads Script`
 4. 复制脚本模板
 5. 把脚本里的 `REPLACE_ME` 改成 `.env.local` 里的 `GOOGLE_ADS_SCRIPT_TOKEN`
-6. 去 Google Ads 后台的 `Scripts`
-7. 新建脚本并粘贴
-8. 先点一次“预览”或“运行”确认能拉到数据
-9. 再设置执行频率，比如每 15 分钟一次
+6. 这份脚本已经是兼容版，会同时通过请求头和 URL 参数传 token，专门兼容部分 Google Ads Script 环境下 header 鉴权不稳定的问题
+7. 去 Google Ads 后台的 `Scripts`
+8. 新建脚本并粘贴
+9. 先点一次“预览”或“运行”确认能拉到数据
+10. 如果日志出现 `No pending suffix updates for ...`，说明鉴权已经成功，只是暂时没有待同步记录
+11. 再设置执行频率，比如每 15 分钟一次
 
 后面就不需要你每次手点了，脚本会自己把“待同步”的后缀更新到广告系列。
 

@@ -33,6 +33,8 @@ export function buildGoogleAdsScriptTemplate(baseUrl: string) {
   const sanitizedBaseUrl = baseUrl.replace(/\/+$/, "");
 
   return [
+    "// Compatibility version: sends token by both header and URL query string.",
+    "// You only need to replace REPLACE_ME with your GOOGLE_ADS_SCRIPT_TOKEN.",
     "var BASE_URL = '" + sanitizedBaseUrl + "';",
     "var SCRIPT_TOKEN = 'REPLACE_ME';",
     "",
@@ -64,7 +66,7 @@ export function buildGoogleAdsScriptTemplate(baseUrl: string) {
     "    {",
     "      method: 'get',",
     "      muteHttpExceptions: true,",
-      "      headers: buildHeaders(),",
+    "      headers: buildHeaders(),",
     "    }",
     "  );",
     "",
