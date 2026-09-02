@@ -457,6 +457,30 @@ function normalizeBrowserUrl(value?: string | null) {
   return value;
 }
 
+function preserveLandingQuery(landingUrl: string, settledUrl: string) {
+  if (!landingUrl || !settledUrl || landingUrl === settledUrl) {
+    return settledUrl || landingUrl;
+  }
+
+  try {
+    const landing = new URL(landingUrl);
+    const settled = new URL(settledUrl);
+
+    if (
+      landing.origin === settled.origin &&
+      landing.pathname === settled.pathname &&
+      landing.search &&
+      !settled.search
+    ) {
+      return landingUrl;
+    }
+  } catch {
+    /* ignore invalid URLs */
+  }
+
+  return settledUrl;
+}
+
 const embeddedRedirectParamNames = new Set([
   "url",
   "u",
@@ -923,7 +947,7 @@ async function followAffiliateRedirectWithBrowser(
     }
 
     let lastResponseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
-    finalUrl = normalizeBrowserUrl(page.url()) ?? lastResponseUrl;
+    finalUrl = preserveLandingQuery(lastResponseUrl, normalizeBrowserUrl(page.url()) ?? lastResponseUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
@@ -933,12 +957,12 @@ async function followAffiliateRedirectWithBrowser(
       const currentPageUrl = normalizeBrowserUrl(page.url()) ?? finalUrl;
       const html = await page.content().catch(() => "");
       const nextUrl = pickBrowserRedirectUrl(currentPageUrl, lastResponseUrl, html);
-      const settledUrl = await waitForStablePageUrl(page, currentPageUrl, 5000, 1000);
-      finalUrl = settledUrl;
+      const observedUrl = await waitForStablePageUrl(page, currentPageUrl, 5000, 1000);
+      finalUrl = observedUrl;
 
       if (typeof nextUrl !== "string" || nextUrl === finalUrl) {
-        if (settledUrl !== currentPageUrl) {
-          lastResponseUrl = settledUrl;
+        if (observedUrl !== currentPageUrl) {
+          lastResponseUrl = observedUrl;
           continue;
         }
         break;
@@ -949,7 +973,8 @@ async function followAffiliateRedirectWithBrowser(
         timeout: 20000,
       });
       lastResponseUrl = normalizeBrowserUrl(response?.url()) ?? nextUrl;
-      finalUrl = await waitForStablePageUrl(page, lastResponseUrl, 7000, 1200);
+      const settledUrl = await waitForStablePageUrl(page, lastResponseUrl, 7000, 1200);
+      finalUrl = preserveLandingQuery(lastResponseUrl, settledUrl);
 
       try {
         await page.waitForLoadState("networkidle", { timeout: 3000 });
@@ -958,7 +983,10 @@ async function followAffiliateRedirectWithBrowser(
       }
     }
 
-    finalUrl = await waitForStablePageUrl(page, finalUrl, 4000, 1200);
+    finalUrl = preserveLandingQuery(
+      finalUrl,
+      await waitForStablePageUrl(page, finalUrl, 4000, 1200),
+    );
 
     if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
       throw buildError(
