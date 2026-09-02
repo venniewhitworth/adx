@@ -118,6 +118,7 @@ export function buildGoogleAdsScriptTemplate(baseUrl: string) {
     "",
     "  if (SCRIPT_TOKEN && SCRIPT_TOKEN !== 'REPLACE_ME') {",
     "    headers['x-google-ads-script-token'] = SCRIPT_TOKEN;",
+    "    headers.authorization = 'Bearer ' + SCRIPT_TOKEN;",
     "  }",
     "",
     "  return headers;",

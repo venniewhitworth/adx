@@ -2,7 +2,10 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
-import { refreshFinalUrlIntervalOptions } from "@/lib/final-url-refresh";
+import {
+  defaultRefreshFinalUrlInterval,
+  refreshFinalUrlIntervalOptions,
+} from "@/lib/final-url-refresh";
 import {
   normalizeGoogleAdsCustomerId,
   toGoogleAdsSuffix,
@@ -334,29 +337,6 @@ function assertSchedule(startAt: string | null, endAt: string | null) {
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime > endTime) {
     throw buildError("持续时间范围无效，请检查开始和结束日期");
   }
-}
-
-function isWithinScheduleWindow(
-  link: Pick<AdLink, "schedule_start_at" | "schedule_end_at">,
-  now: Date,
-) {
-  const currentTime = now.getTime();
-
-  if (link.schedule_start_at) {
-    const startTime = new Date(link.schedule_start_at).getTime();
-    if (Number.isFinite(startTime) && currentTime < startTime) {
-      return false;
-    }
-  }
-
-  if (link.schedule_end_at) {
-    const endTime = new Date(link.schedule_end_at).getTime();
-    if (Number.isFinite(endTime) && currentTime > endTime) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function createEmptyExitGeoInfo(): ExitGeoInfo {
@@ -936,8 +916,7 @@ function isLinkDueForFinalUrlRefresh(link: AdLink, now = new Date()) {
   if (
     !link.is_active ||
     !link.tracking_url ||
-    link.refresh_final_url_interval_hours === null ||
-    !isWithinScheduleWindow(link, now)
+    link.refresh_final_url_interval_hours === null
   ) {
     return false;
   }
@@ -1120,7 +1099,7 @@ function validateCreateInput(input: AdLinkCreate) {
     target_url: targetUrl,
     tracking_url: trackingUrl || null,
     refresh_final_url_interval_hours: parseRefreshIntervalHours(
-      input.refresh_final_url_interval_hours,
+      input.refresh_final_url_interval_hours ?? defaultRefreshFinalUrlInterval,
     ),
     offer: normalizeOptionalText(input.offer),
     offer_id: normalizeOptionalText(input.offer_id),

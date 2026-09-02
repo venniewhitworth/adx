@@ -1,5 +1,7 @@
 import type { RefreshFinalUrlIntervalHours } from "@/types/ad-link";
 
+export const defaultRefreshFinalUrlInterval: RefreshFinalUrlIntervalHours = 60;
+
 export const refreshFinalUrlIntervalOptions: Array<{
   value: RefreshFinalUrlIntervalHours;
   label: string;

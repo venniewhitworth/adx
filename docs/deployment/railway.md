@@ -9,8 +9,9 @@ The dashboard workflow is now intentionally simple:
 1. Open `/dashboard`
 2. Fill in `name`, `tracking link`, and `country`
 3. Keep the default Facebook Referer or enter a custom `Referer URL`
-4. Click `Save and Resolve`
-5. Copy the final URL or Google Ads suffix
+4. Keep the default refresh interval at `1 hour`, or choose another interval
+5. Click `Save and Resolve`
+6. Copy the final URL or Google Ads suffix
 
 The app now defaults to IPRoyal for proxy resolution and syncs Google Ads only at the campaign level.
 

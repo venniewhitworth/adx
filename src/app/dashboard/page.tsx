@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import {
+  defaultRefreshFinalUrlInterval,
   refreshFinalUrlIntervalOptions,
 } from "@/lib/final-url-refresh";
 import {
@@ -80,7 +81,7 @@ function createEmptyFormState(): QuickFormState {
     countryCode: "US",
     refererPreset: defaultRefererPreset,
     refererUrl: defaultRefererUrl,
-    refreshFinalUrlIntervalHours: "120",
+    refreshFinalUrlIntervalHours: String(defaultRefreshFinalUrlInterval),
     targetUrl: "",
     offer: "",
     offerId: "",
@@ -102,7 +103,9 @@ function createFormStateFromLink(link: AdLink): QuickFormState {
     countryCode: link.country_code ?? "US",
     refererPreset: matchedPreset?.value ?? (link.referer_url ? "custom" : defaultRefererPreset),
     refererUrl: link.referer_url ?? matchedPreset?.url ?? defaultRefererUrl,
-    refreshFinalUrlIntervalHours: String(link.refresh_final_url_interval_hours ?? "120"),
+    refreshFinalUrlIntervalHours: String(
+      link.refresh_final_url_interval_hours ?? defaultRefreshFinalUrlInterval,
+    ),
     targetUrl: link.target_url,
     offer: link.offer ?? "",
     offerId: link.offer_id ?? "",
@@ -895,7 +898,9 @@ export default function DashboardPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#5E514A]">自动刷新</label>
+                  <label className="mb-2 block text-sm font-medium text-[#5E514A]">
+                    自动刷新（默认每 1 小时）
+                  </label>
                   <select
                     value={form.refreshFinalUrlIntervalHours}
                     onChange={(event) =>
