@@ -964,20 +964,43 @@ async function detectExitGeoViaBrowser(page: Page): Promise<ExitGeoInfo> {
   }
 }
 
+type BrowserUrlCapture = {
+  finalUrl: string;
+  candidates: string[];
+};
+
 async function waitForStablePageUrl(
   page: Page,
   baselineUrl: string,
   totalWaitMs = 8000,
   idleWaitMs = 1200,
   pollMs = 250,
-) {
+): Promise<BrowserUrlCapture> {
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  const record = (value?: string | null) => {
+    const normalized = normalizeBrowserUrl(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
   let currentUrl = normalizeBrowserUrl(page.url()) ?? baselineUrl;
   let lastChangeAt = Date.now();
   const startedAt = lastChangeAt;
 
+  record(baselineUrl);
+  record(page.url());
+  record(currentUrl);
+
   while (Date.now() - startedAt < totalWaitMs) {
     await page.waitForTimeout(pollMs);
     const nextUrl = normalizeBrowserUrl(page.url());
+
+    record(nextUrl);
 
     if (!nextUrl) {
       continue;
@@ -994,7 +1017,73 @@ async function waitForStablePageUrl(
     }
   }
 
-  return currentUrl;
+  record(currentUrl);
+  return { finalUrl: currentUrl, candidates };
+}
+
+function countUrlPathSegments(value: string) {
+  try {
+    return new URL(value).pathname.split("/").filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
+
+function scoreBrowserCandidate(value: string, trackingUrl: string, officialUrl?: string | null) {
+  let score = 0;
+
+  const normalizedValue = normalizeUrlForContainment(value);
+  const normalizedOfficial = officialUrl ? normalizeUrlForContainment(officialUrl) : "";
+
+  if (normalizedOfficial && normalizedValue.includes(normalizedOfficial)) {
+    score += 1000;
+  }
+
+  if (officialUrl && doesResolvedUrlMatchOfficialUrl(value, officialUrl)) {
+    score += 300;
+  }
+
+  if (!isAffiliateTrackingUrl(value, trackingUrl)) {
+    score += 200;
+  } else {
+    score -= 1000;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.search) {
+      score += 120 + Math.min(url.search.length, 80);
+    }
+    if (url.pathname && url.pathname !== "/") {
+      score += 80 + Math.min(countUrlPathSegments(value) * 8, 40);
+      score += Math.min(url.pathname.length, 80);
+    } else {
+      score += 10;
+    }
+    score += Math.min(value.length, 160) / 10;
+  } catch {
+    score += Math.min(value.length, 120) / 10;
+  }
+
+  return score;
+}
+
+function pickBestBrowserFinalUrl(
+  candidates: string[],
+  trackingUrl: string,
+  officialUrl?: string | null,
+) {
+  const uniqueCandidates = [...new Set(candidates.map((value) => normalizeBrowserUrl(value)).filter((value): value is string => Boolean(value)))];
+
+  if (!uniqueCandidates.length) {
+    return null;
+  }
+
+  return uniqueCandidates.reduce((best, candidate) => {
+    const bestScore = scoreBrowserCandidate(best, trackingUrl, officialUrl);
+    const candidateScore = scoreBrowserCandidate(candidate, trackingUrl, officialUrl);
+    return candidateScore > bestScore ? candidate : best;
+  });
 }
 
 async function followAffiliateRedirectWithBrowser(
@@ -1064,8 +1153,13 @@ async function followAffiliateRedirectWithBrowser(
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
-    const finalStableUrl = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
-    const browserFinalUrl = preserveLandingQuery(finalUrl, finalStableUrl, officialUrl);
+    const stableCapture = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
+    const browserFinalUrl =
+      pickBestBrowserFinalUrl(
+        [responseUrl, settledUrl, finalUrl, stableCapture.finalUrl, ...stableCapture.candidates],
+        trackingUrl,
+        officialUrl,
+      ) ?? preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
 
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
     return splitFinalUrl(browserFinalUrl, exitGeoInfo);
