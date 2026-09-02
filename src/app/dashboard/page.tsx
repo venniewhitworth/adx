@@ -40,6 +40,7 @@ import type { RefreshFinalUrlIntervalHours } from "@/types/ad-link";
 type QuickFormState = {
   name: string;
   trackingUrl: string;
+  officialUrl: string;
   countryCode: string;
   refererPreset: string;
   refererUrl: string;
@@ -78,6 +79,7 @@ function createEmptyFormState(): QuickFormState {
   return {
     name: "",
     trackingUrl: "",
+    officialUrl: "",
     countryCode: "US",
     refererPreset: defaultRefererPreset,
     refererUrl: defaultRefererUrl,
@@ -100,6 +102,7 @@ function createFormStateFromLink(link: AdLink): QuickFormState {
   return {
     name: link.name,
     trackingUrl: link.tracking_url ?? "",
+    officialUrl: link.official_url ?? "",
     countryCode: link.country_code ?? "US",
     refererPreset: matchedPreset?.value ?? (link.referer_url ? "custom" : defaultRefererPreset),
     refererUrl: link.referer_url ?? matchedPreset?.url ?? defaultRefererUrl,
@@ -142,6 +145,40 @@ function trimOrUndefined(value: string) {
   return trimmed ? trimmed : undefined;
 }
 
+function toComparableHostname(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const candidate = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const hostname = new URL(candidate).hostname.trim().toLowerCase().replace(/\.$/, "");
+    return hostname.replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+function doesOfficialUrlMatchTarget(
+  targetUrl: string | null | undefined,
+  officialUrl: string | null | undefined,
+) {
+  const targetHostname = toComparableHostname(targetUrl);
+  const officialHostname = toComparableHostname(officialUrl);
+
+  if (!targetHostname || !officialHostname) {
+    return false;
+  }
+
+  return (
+    targetHostname === officialHostname ||
+    targetHostname.endsWith(`.${officialHostname}`) ||
+    officialHostname.endsWith(`.${targetHostname}`)
+  );
+}
+
 function normalizeRefererPayload(form: QuickFormState) {
   if (form.refererPreset === "custom") {
     return trimOrUndefined(form.refererUrl);
@@ -159,6 +196,7 @@ function buildPayload(form: QuickFormState): AdLinkCreate | AdLinkUpdate {
   return {
     name: form.name.trim(),
     tracking_url: trimOrUndefined(form.trackingUrl),
+    official_url: trimOrUndefined(form.officialUrl),
     target_url: trimOrUndefined(form.targetUrl),
     country_code: trimOrUndefined(form.countryCode),
     proxy_provider: defaultProxyProviderName,
@@ -272,6 +310,9 @@ function ResultCard({
   const previousFinalUrl = link.previous_target_url || "暂无上一次记录";
   const lastSyncedSuffix = link.google_ads_last_synced_suffix || "还没有同步过";
   const finalUrlChanged = hasFinalUrlChanged(link);
+  const officialUrlMatched = doesOfficialUrlMatchTarget(link.target_url, link.official_url);
+  const officialHostname = toComparableHostname(link.official_url);
+  const targetHostname = toComparableHostname(link.target_url);
   const suffixChangedSinceLastSync =
     Boolean(link.google_ads_last_synced_suffix) &&
     Boolean(finalUrlSuffix) &&
@@ -309,12 +350,25 @@ function ResultCard({
               tone={resolveTone}
             />
             <StatusBadge label={link.sync_status === "synced" ? "已同步" : "待同步"} tone={syncTone} />
+            <StatusBadge
+              label={
+                !link.official_url
+                  ? "未设官网校验"
+                  : !link.target_url
+                    ? "待校验"
+                    : officialUrlMatched
+                      ? "官网已命中"
+                      : "官网未命中"
+              }
+              tone={!link.official_url ? "default" : officialUrlMatched ? "success" : "danger"}
+            />
             <StatusBadge label={link.is_active ? "启用中" : "已停用"} tone={link.is_active ? "success" : "default"} />
           </div>
         </div>
         <div className="rounded-2xl border border-[#E8DDD2] bg-[#FFFDFB] px-4 py-3 text-sm text-[#7D6E65]">
           <div>国家：{link.country_code || "未设置"}</div>
           <div className="mt-1">Referer：{link.referer_url || "未设置"}</div>
+          <div className="mt-1">官网：{link.official_url || "未填写"}</div>
           <div className="mt-1">代理：{link.proxy_provider || defaultProxyProviderName}</div>
         </div>
       </div>
@@ -330,6 +384,11 @@ function ResultCard({
             key: "ads-suffix",
             label: "Google Ads 后缀",
             value: finalUrlSuffix || "还没有可用后缀",
+          },
+          {
+            key: "official-url",
+            label: "官网地址/域名",
+            value: link.official_url || "未填写，系统将按真实解析结果保存",
           },
         ].map((item) => (
           <div key={item.key} className="rounded-2xl border border-[#E8DDD2] bg-[#FFFCF8] p-4">
@@ -357,12 +416,26 @@ function ResultCard({
           <p className="mt-1 break-all font-mono text-xs leading-6 text-[#5E514A]">
             {link.target_url || "还没解析出最终 URL"}
           </p>
+          <p className="mt-3 text-xs text-[#AA9E96]">官网地址/域名</p>
+          <p className="mt-1 break-all font-mono text-xs leading-6 text-[#5E514A]">
+            {link.official_url || "未填写"}
+          </p>
           <p className="mt-3 text-xs text-[#AA9E96]">上一次最终 URL</p>
           <p className="mt-1 break-all font-mono text-xs leading-6 text-[#7D6E65]">
             {previousFinalUrl}
           </p>
           <p className="mt-3 text-xs text-[#AA9E96]">
             变化判断：{finalUrlChanged ? "已变化" : "暂无变化"}
+          </p>
+          <p className="mt-2 text-xs text-[#AA9E96]">
+            域名校验：
+            {!link.official_url
+              ? "未设置官网地址/域名"
+              : !link.target_url
+                ? "还没有可校验的最终 URL"
+                : officialUrlMatched
+                  ? `已命中 ${officialHostname || link.official_url}`
+                  : `未命中，当前是 ${targetHostname || "未知域名"}`}
           </p>
         </div>
 
@@ -654,6 +727,7 @@ export default function DashboardPage() {
       [
         link.name,
         link.offer ?? "",
+        link.official_url ?? "",
         link.target_url,
         link.tracking_url ?? "",
         link.google_ads_customer_id ?? "",
@@ -855,7 +929,7 @@ export default function DashboardPage() {
                   </p>
                 ) : null}
                 <p className="mt-3 text-sm leading-7 text-[#7D6E65]">
-                  第一次使用时只管填名字、联盟链接、国家和 Referer。短码会在系统内部自动生成，保存后系统会马上解析，右侧直接给你结果。
+                  第一次使用时先填名字、联盟链接、官网地址/域名、国家和 Referer。只要最终落地域名命中这里填写的官网域名，这条记录就算成功。
                 </p>
               </div>
               <button
@@ -889,6 +963,19 @@ export default function DashboardPage() {
                   required
                   className={fieldClassName}
                 />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[#5E514A]">官网地址/域名</label>
+                <input
+                  value={form.officialUrl}
+                  onChange={(event) => setForm((current) => ({ ...current, officialUrl: event.target.value }))}
+                  placeholder="https://www.flexjobs.com/ 或 flexjobs.com"
+                  className={fieldClassName}
+                />
+                <p className="mt-2 text-xs leading-6 text-[#AA9E96]">
+                  这个值专门用来做成功判定。只要最终落地域名和这里一致，就算解析成功。
+                </p>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">

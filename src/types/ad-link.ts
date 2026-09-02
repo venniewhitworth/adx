@@ -24,6 +24,7 @@ export interface AdLink {
   slug: string;
   name: string;
   target_url: string;
+  official_url: string | null;
   tracking_url: string | null;
   referer_url: string | null;
   previous_target_url: string | null;
@@ -71,6 +72,7 @@ export interface AdLink {
 export interface AdLinkCreate {
   name: string;
   target_url?: string;
+  official_url?: string;
   tracking_url?: string;
   referer_url?: string;
   offer?: string;
@@ -101,6 +103,7 @@ export interface AdLinkCreate {
 export interface AdLinkUpdate {
   name?: string;
   target_url?: string;
+  official_url?: string;
   tracking_url?: string;
   referer_url?: string;
   offer?: string;

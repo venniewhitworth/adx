@@ -9,22 +9,45 @@ import type {
   Stats,
 } from "@/types/ad-link";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<T> {
+  const timeoutMs = init?.timeoutMs;
   const headers = new Headers(init?.headers);
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(path, {
-    headers,
-    ...init,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "请求失败");
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeoutId =
+    controller && timeoutMs
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+
+  try {
+    const res = await fetch(path, {
+      headers,
+      signal: controller?.signal ?? init?.signal,
+      ...init,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "请求失败");
+    }
+    if (res.status === 204) return undefined as T;
+    return res.json();
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error("解析超时，请稍后重试");
+    }
+    throw error;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
   }
-  if (res.status === 204) return undefined as T;
-  return res.json();
 }
 
 export const api = {
@@ -47,7 +70,7 @@ export const api = {
     request<void>(`/api/links/${id}`, { method: "DELETE" }),
 
   resolveFinalUrl: (id: number) =>
-    request<AdLink>(`/api/links/${id}/resolve`, { method: "POST" }),
+    request<AdLink>(`/api/links/${id}/resolve`, { method: "POST", timeoutMs: 60000 }),
 
   refreshDueFinalUrls: (limit?: number) => {
     const q = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";

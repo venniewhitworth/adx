@@ -320,6 +320,33 @@ function assertValidUrl(value: string) {
   }
 }
 
+function toComparableHostname(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const candidate = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const hostname = new URL(candidate).hostname.trim().toLowerCase().replace(/\.$/, "");
+    return hostname.replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOfficialUrl(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function assertValidOfficialUrl(value: string) {
+  if (!toComparableHostname(value)) {
+    throw buildError("官网地址/域名必须是有效域名或 http(s) 地址");
+  }
+}
+
 function normalizeRefererUrl(
   refererUrl?: string | null,
   refererSources?: string[] | null,
@@ -387,6 +414,26 @@ function splitFinalUrl(finalUrl: string, exitGeoInfo?: Partial<ExitGeoInfo>): Re
 
 function hostnameMatchesOrIsSubdomain(hostname: string, expected: string) {
   return hostname === expected || hostname.endsWith(`.${expected}`);
+}
+
+function doesResolvedUrlMatchOfficialUrl(resolvedUrl: string, officialUrl: string) {
+  const resolvedHostname = toComparableHostname(resolvedUrl);
+  const officialHostname = toComparableHostname(officialUrl);
+
+  if (!resolvedHostname || !officialHostname) {
+    return false;
+  }
+
+  return (
+    hostnameMatchesOrIsSubdomain(resolvedHostname, officialHostname) ||
+    hostnameMatchesOrIsSubdomain(officialHostname, resolvedHostname)
+  );
+}
+
+function assertTargetUrlMatchesOfficialUrl(targetUrl: string, officialUrl: string) {
+  if (!doesResolvedUrlMatchOfficialUrl(targetUrl, officialUrl)) {
+    throw buildError("手动填写的最终 URL 和官网地址/域名不一致");
+  }
 }
 
 const knownAffiliateTrackingDomains = [
@@ -1354,7 +1401,11 @@ function isLinkDueForFinalUrlRefresh(link: AdLink, now = new Date()) {
 }
 
 function buildPendingGoogleAdsSyncItem(link: AdLink): GoogleAdsPendingSyncItem | null {
-  if (!link.is_active || link.sync_status !== "pending") {
+  if (
+    !link.is_active ||
+    link.sync_status !== "pending" ||
+    (link.resolve_status !== "resolved" && link.resolve_status !== "changed")
+  ) {
     return null;
   }
 
@@ -1363,6 +1414,10 @@ function buildPendingGoogleAdsSyncItem(link: AdLink): GoogleAdsPendingSyncItem |
   const finalUrlSuffix = toGoogleAdsSuffix(link.final_url_query);
 
   if (!customerId || !entityId || !finalUrlSuffix || !link.final_url_base || !link.target_url) {
+    return null;
+  }
+
+  if (link.official_url && !doesResolvedUrlMatchOfficialUrl(link.target_url, link.official_url)) {
     return null;
   }
 
@@ -1420,6 +1475,9 @@ function normalizeStoredLink(raw: Partial<AdLink>, fallbackId: number): AdLink {
     slug: normalizedSlug || `link-${fallbackId}`,
     name: raw.name?.trim() ?? "",
     target_url: raw.target_url?.trim() ?? "",
+    official_url: normalizeOfficialUrl(
+      (raw as AdLink & { official_url?: string | null }).official_url,
+    ),
     tracking_url: normalizeOptionalText(raw.tracking_url),
     referer_url: normalizeRefererUrl(
       (raw as AdLink & { referer_url?: string | null }).referer_url,
@@ -1483,6 +1541,7 @@ function validateAutoSwapTargetsInput(value: AutoSwapTarget[] | undefined) {
 function validateCreateInput(input: AdLinkCreate) {
   const name = input.name.trim();
   const targetUrl = input.target_url?.trim() ?? "";
+  const officialUrl = input.official_url?.trim() ?? "";
   const trackingUrl = input.tracking_url?.trim() ?? "";
   const refererSources = normalizeStringArray(input.referer_sources);
   const dailyBudget = parseNumberOrNull(input.daily_budget);
@@ -1497,7 +1556,11 @@ function validateCreateInput(input: AdLinkCreate) {
     throw buildError("联盟推广链接和最终链接至少要填写一个");
   }
   if (targetUrl) assertValidUrl(targetUrl);
+  if (officialUrl) assertValidOfficialUrl(officialUrl);
   if (trackingUrl) assertValidUrl(trackingUrl);
+  if (targetUrl && officialUrl) {
+    assertTargetUrlMatchesOfficialUrl(targetUrl, officialUrl);
+  }
 
   assertDailyClicksRange(clicksPerDayMin, clicksPerDayMax);
 
@@ -1506,6 +1569,7 @@ function validateCreateInput(input: AdLinkCreate) {
   const data = {
     name,
     target_url: targetUrl,
+    official_url: officialUrl || null,
     tracking_url: trackingUrl || null,
     refresh_final_url_interval_hours: parseRefreshIntervalHours(
       input.refresh_final_url_interval_hours ?? defaultRefreshFinalUrlInterval,
@@ -1551,6 +1615,11 @@ function validateUpdateInput(input: AdLinkUpdate) {
     const targetUrl = input.target_url.trim();
     if (targetUrl) assertValidUrl(targetUrl);
     update.target_url = targetUrl;
+  }
+  if (input.official_url !== undefined) {
+    const officialUrl = input.official_url.trim();
+    if (officialUrl) assertValidOfficialUrl(officialUrl);
+    update.official_url = officialUrl || null;
   }
   if (input.tracking_url !== undefined) {
     const trackingUrl = input.tracking_url.trim();
@@ -1730,11 +1799,12 @@ export async function createLink(input: AdLinkCreate) {
       finalUrlQuery = split.finalUrlQuery;
     }
 
-    const link: AdLink = {
+  const link: AdLink = {
       id: store.nextId,
       slug,
       name: data.name,
       target_url: data.target_url,
+      official_url: data.official_url,
       tracking_url: data.tracking_url,
       referer_url: data.referer_url,
       previous_target_url: null,
@@ -1814,6 +1884,10 @@ export async function updateLink(id: number, input: AdLinkUpdate) {
       nextLink.final_url_query = null;
     }
 
+    if (nextLink.target_url && nextLink.official_url) {
+      assertTargetUrlMatchesOfficialUrl(nextLink.target_url, nextLink.official_url);
+    }
+
     const autoSwapConfigChanged =
       update.auto_swap_enabled !== undefined ||
       update.auto_swap_interval_minutes !== undefined ||
@@ -1829,6 +1903,7 @@ export async function updateLink(id: number, input: AdLinkUpdate) {
     const shouldResetSyncStatus =
       input.tracking_url !== undefined ||
       input.target_url !== undefined ||
+      input.official_url !== undefined ||
       input.google_ads_customer_id !== undefined ||
       input.google_ads_entity_type !== undefined ||
       input.google_ads_entity_id !== undefined;
@@ -1941,6 +2016,7 @@ export async function refreshFinalUrl(id: number) {
 
     try {
       const resolved = await resolveTrackingUrl(link);
+      const now = new Date().toISOString();
       const previousFinalUrl = link.target_url || null;
       const changed = previousFinalUrl !== null && previousFinalUrl !== resolved.finalUrl;
 
@@ -1948,9 +2024,8 @@ export async function refreshFinalUrl(id: number) {
       link.target_url = resolved.finalUrl;
       link.final_url_base = resolved.finalUrlBase;
       link.final_url_query = resolved.finalUrlQuery;
-      link.resolve_status = changed ? "changed" : "resolved";
       link.sync_status = "pending";
-      link.last_resolved_at = new Date().toISOString();
+      link.last_resolved_at = now;
       link.last_resolve_error = null;
       link.last_resolved_ip = resolved.resolvedIp ?? link.last_resolved_ip;
       link.last_resolved_country_code =
@@ -1958,7 +2033,20 @@ export async function refreshFinalUrl(id: number) {
       link.last_resolved_country_name =
         resolved.resolvedCountryName ?? link.last_resolved_country_name;
       link.google_ads_last_sync_error = null;
-      link.updated_at = link.last_resolved_at;
+      link.updated_at = now;
+
+      if (
+        link.official_url &&
+        !doesResolvedUrlMatchOfficialUrl(resolved.finalUrl, link.official_url)
+      ) {
+        const resolvedHostname = toComparableHostname(resolved.finalUrl) ?? resolved.finalUrl;
+        link.resolve_status = "error";
+        link.last_resolve_error =
+          `当前解析结果的域名 ${resolvedHostname} 和官网地址/域名 ${link.official_url} 不一致，只有命中这个官网域名才算成功。`;
+        throw buildError(link.last_resolve_error, 409);
+      }
+
+      link.resolve_status = changed ? "changed" : "resolved";
 
       return link;
     } catch (error) {
@@ -2058,6 +2146,7 @@ export async function exportLinksCsv(filters: LinkFilters = {}) {
     "tracking_url",
     "referer_url",
     "target_url",
+    "official_url",
     "previous_target_url",
     "final_url_base",
     "final_url_query",
@@ -2093,6 +2182,7 @@ export async function exportLinksCsv(filters: LinkFilters = {}) {
     link.tracking_url,
     link.referer_url,
     link.target_url,
+    link.official_url,
     link.previous_target_url,
     link.final_url_base,
     link.final_url_query,
