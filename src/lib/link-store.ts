@@ -765,6 +765,25 @@ async function detectExitGeoViaBrowser(page: Page): Promise<ExitGeoInfo> {
   }
 }
 
+async function waitForPageUrlChange(page: Page, baselineUrl: string, attempts = 12, delayMs = 1000) {
+  let currentUrl = page.url() || baselineUrl;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await page.waitForTimeout(delayMs);
+    const nextUrl = page.url();
+    if (!nextUrl || nextUrl === "about:blank" || nextUrl.startsWith("chrome-error://")) {
+      continue;
+    }
+
+    currentUrl = nextUrl;
+    if (nextUrl !== baselineUrl) {
+      break;
+    }
+  }
+
+  return currentUrl;
+}
+
 async function followAffiliateRedirectWithBrowser(
   trackingUrl: string,
   proxy: ProxyConnection,
@@ -808,10 +827,10 @@ async function followAffiliateRedirectWithBrowser(
       });
     }
 
-      await page.goto(initialUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 45000,
-        referer: refererUrl ?? undefined,
+    await page.goto(initialUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 45000,
+      referer: refererUrl ?? undefined,
     });
 
     try {
@@ -820,15 +839,7 @@ async function followAffiliateRedirectWithBrowser(
       /* some landing pages keep connections open */
     }
 
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await page.waitForTimeout(1000);
-      const currentUrl = page.url();
-      if (currentUrl && currentUrl !== trackingUrl && currentUrl !== "about:blank") {
-        break;
-      }
-    }
-
-    finalUrl = page.url() || trackingUrl;
+    finalUrl = await waitForPageUrlChange(page, initialUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
@@ -844,8 +855,7 @@ async function followAffiliateRedirectWithBrowser(
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
-      await page.waitForTimeout(2000);
-      finalUrl = page.url() || nextUrl;
+      finalUrl = await waitForPageUrlChange(page, nextUrl, 5);
     }
 
     finalUrl = unwrapEmbeddedRedirectUrl(finalUrl);
