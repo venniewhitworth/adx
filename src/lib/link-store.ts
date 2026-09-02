@@ -369,6 +369,14 @@ function hostnameMatchesOrIsSubdomain(hostname: string, expected: string) {
   return hostname === expected || hostname.endsWith(`.${expected}`);
 }
 
+const knownAffiliateTrackingDomains = [
+  "linkhaitao.com",
+  "fatcoupon.com",
+  "partner.fatcoupon.com",
+  "redirect.partner.fatcoupon.com",
+  "afflat3a2.com",
+];
+
 function isAffiliateTrackingUrl(finalUrl: string, trackingUrl: string) {
   try {
     const final = new URL(finalUrl);
@@ -380,7 +388,9 @@ function isAffiliateTrackingUrl(finalUrl: string, trackingUrl: string) {
       return true;
     }
 
-    return hostnameMatchesOrIsSubdomain(finalHostname, "linkhaitao.com");
+    return knownAffiliateTrackingDomains.some((domain) =>
+      hostnameMatchesOrIsSubdomain(finalHostname, domain),
+    );
   } catch {
     return finalUrl === trackingUrl;
   }
@@ -844,15 +854,27 @@ async function followAffiliateRedirectWithBrowser(
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
-    const html = await page.content().catch(() => "");
-    const htmlRedirectUrl = html ? extractHtmlRedirectUrl(html, finalUrl) : null;
-    if (typeof htmlRedirectUrl === "string" && htmlRedirectUrl !== finalUrl) {
-      const nextUrl = htmlRedirectUrl;
+    for (let redirectDepth = 0; redirectDepth < 5; redirectDepth += 1) {
+      const html = await page.content().catch(() => "");
+      const nextUrl =
+        (html ? extractHtmlRedirectUrl(html, finalUrl) : null) ??
+        extractEmbeddedRedirectUrl(finalUrl);
+
+      if (typeof nextUrl !== "string" || nextUrl === finalUrl) {
+        break;
+      }
+
       await page.goto(nextUrl, {
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
       finalUrl = await waitForPageUrlChange(page, nextUrl, 5);
+
+      try {
+        await page.waitForLoadState("networkidle", { timeout: 3000 });
+      } catch {
+        /* ignore long-polling pages */
+      }
     }
 
     if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
