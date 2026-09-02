@@ -423,6 +423,71 @@ function extractHtmlRedirectUrl(html: string, baseUrl: string): string | null {
   return null;
 }
 
+const embeddedRedirectParamNames = new Set([
+  "url",
+  "u",
+  "target",
+  "dest",
+  "destination",
+  "redirect",
+  "redirect_url",
+  "redirecturl",
+  "go",
+  "to",
+  "next",
+  "return",
+  "return_url",
+  "out",
+  "store_url",
+  "storeurl",
+  "link",
+]);
+
+function decodeRedirectCandidate(value: string) {
+  let current = value.trim();
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const next = decodeURIComponent(current);
+      if (next === current) {
+        break;
+      }
+      current = next;
+    } catch {
+      break;
+    }
+  }
+
+  return current.trim();
+}
+
+function extractEmbeddedRedirectUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+
+    for (const [key, value] of url.searchParams.entries()) {
+      if (!embeddedRedirectParamNames.has(key.toLowerCase())) {
+        continue;
+      }
+
+      const candidate = decodeRedirectCandidate(value);
+      if (!candidate) {
+        continue;
+      }
+
+      try {
+        return new URL(candidate, url.href).href;
+      } catch {
+        /* ignore invalid embedded URLs */
+      }
+    }
+  } catch {
+    /* ignore invalid URL */
+  }
+
+  return null;
+}
+
 function shouldUseKookeeyProxy(link: Pick<AdLink, "proxy_provider">) {
   return link.proxy_provider?.toLowerCase().includes("kookeey") ?? false;
 }
@@ -736,14 +801,16 @@ async function followAffiliateRedirectWithBrowser(
 
     const html = await page.content().catch(() => "");
     const htmlRedirectUrl = html ? extractHtmlRedirectUrl(html, finalUrl) : null;
+    const embeddedRedirectUrl = extractEmbeddedRedirectUrl(finalUrl);
 
-    if (htmlRedirectUrl && htmlRedirectUrl !== finalUrl) {
-      await page.goto(htmlRedirectUrl, {
+    const nextUrl = htmlRedirectUrl ?? embeddedRedirectUrl;
+    if (typeof nextUrl === "string" && nextUrl !== finalUrl) {
+      await page.goto(nextUrl, {
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
       await page.waitForTimeout(2000);
-      finalUrl = page.url() || htmlRedirectUrl;
+      finalUrl = page.url() || nextUrl;
     }
 
     if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
@@ -798,7 +865,7 @@ async function followAffiliateRedirect(
     }
 
     const html = await response.text();
-    const redirectUrl = extractHtmlRedirectUrl(html, finalUrl);
+    const redirectUrl = extractHtmlRedirectUrl(html, finalUrl) ?? extractEmbeddedRedirectUrl(finalUrl);
 
     if (!redirectUrl || redirectUrl === finalUrl) {
       // 没有检测到 HTML 跳转，当前就是最终页面
