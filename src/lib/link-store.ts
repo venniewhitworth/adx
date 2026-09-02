@@ -978,7 +978,7 @@ async function waitForStablePageUrl(
 
 async function followAffiliateRedirectWithBrowser(
   trackingUrl: string,
-  proxy: ProxyConnection,
+  proxy: ProxyConnection | null,
   countryCode?: string | null,
   refererUrl?: string | null,
 ) {
@@ -987,11 +987,15 @@ async function followAffiliateRedirectWithBrowser(
     ensurePlaywrightBrowserPath();
     browser = await chromium.launch({
       headless: true,
-      proxy: {
-        server: proxy.server,
-        username: proxy.username,
-        password: proxy.password,
-      },
+      ...(proxy
+        ? {
+            proxy: {
+              server: proxy.server,
+              username: proxy.username,
+              password: proxy.password,
+            },
+          }
+        : {}),
     });
   } catch (error) {
     throw buildError(toResolverErrorMessage(error), 500);
@@ -1009,7 +1013,6 @@ async function followAffiliateRedirectWithBrowser(
   });
 
   const page = await context.newPage();
-  let finalUrl = trackingUrl;
 
   try {
     if (refererUrl) {
@@ -1031,49 +1034,18 @@ async function followAffiliateRedirectWithBrowser(
       /* some landing pages keep connections open */
     }
 
-    let lastResponseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
-    finalUrl = preserveLandingQuery(lastResponseUrl, normalizeBrowserUrl(page.url()) ?? lastResponseUrl);
+    const responseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
+    const settledUrl = normalizeBrowserUrl(page.url()) ?? responseUrl;
+    const finalUrl = preserveLandingQuery(responseUrl, settledUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
-    for (let redirectDepth = 0; redirectDepth < 5; redirectDepth += 1) {
-      const currentPageUrl = normalizeBrowserUrl(page.url()) ?? finalUrl;
-      const html = await page.content().catch(() => "");
-      const nextUrl = pickBrowserRedirectUrl(currentPageUrl, lastResponseUrl, html);
-      const observedUrl = await waitForStablePageUrl(page, currentPageUrl, 5000, 1000);
-      finalUrl = observedUrl;
+    const finalStableUrl = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
+    const browserFinalUrl = preserveLandingQuery(finalUrl, finalStableUrl);
 
-      if (typeof nextUrl !== "string" || nextUrl === finalUrl) {
-        if (observedUrl !== currentPageUrl) {
-          lastResponseUrl = observedUrl;
-          continue;
-        }
-        break;
-      }
-
-      const response = await page.goto(nextUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      lastResponseUrl = normalizeBrowserUrl(response?.url()) ?? nextUrl;
-      const settledUrl = await waitForStablePageUrl(page, lastResponseUrl, 7000, 1200);
-      finalUrl = preserveLandingQuery(lastResponseUrl, settledUrl);
-
-      try {
-        await page.waitForLoadState("networkidle", { timeout: 3000 });
-      } catch {
-        /* ignore long-polling pages */
-      }
-    }
-
-    finalUrl = preserveLandingQuery(
-      finalUrl,
-      await waitForStablePageUrl(page, finalUrl, 4000, 1200),
-    );
-
-    if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
+    if (isAffiliateTrackingUrl(browserFinalUrl, trackingUrl)) {
       throw buildError(
         "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
         502,
@@ -1081,7 +1053,7 @@ async function followAffiliateRedirectWithBrowser(
     }
 
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
-    return splitFinalUrl(finalUrl, exitGeoInfo);
+    return splitFinalUrl(browserFinalUrl, exitGeoInfo);
   } finally {
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
@@ -1238,16 +1210,6 @@ async function resolveTrackingUrl(link: AdLink) {
           );
         }
 
-        const requestResolved = await followAffiliateRedirectWithRequest(
-          link.tracking_url,
-          proxyConnection,
-          refererUrl,
-        );
-
-        if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
-          return requestResolved;
-        }
-
         const browserResolved = await followAffiliateRedirectWithBrowser(
           link.tracking_url,
           proxyConnection,
@@ -1257,6 +1219,16 @@ async function resolveTrackingUrl(link: AdLink) {
 
         if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
           return browserResolved;
+        }
+
+        const requestResolved = await followAffiliateRedirectWithRequest(
+          link.tracking_url,
+          proxyConnection,
+          refererUrl,
+        );
+
+        if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
+          return requestResolved;
         }
 
         throw buildError(
@@ -1282,6 +1254,21 @@ async function resolveTrackingUrl(link: AdLink) {
   }
 
   if (!shouldUseKookeeyProxy(link)) {
+    try {
+      const browserResolved = await followAffiliateRedirectWithBrowser(
+        link.tracking_url,
+        null,
+        link.country_code,
+        refererUrl,
+      );
+
+      if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
+        return browserResolved;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
     try {
       const requestResolved = await followAffiliateRedirectWithRequest(
         link.tracking_url,
@@ -1335,16 +1322,6 @@ async function resolveTrackingUrl(link: AdLink) {
         );
       }
 
-      const requestResolved = await followAffiliateRedirectWithRequest(
-        link.tracking_url,
-        proxyConnection,
-        refererUrl,
-      );
-
-      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
-        return requestResolved;
-      }
-
       const browserResolved = await followAffiliateRedirectWithBrowser(
         link.tracking_url,
         proxyConnection,
@@ -1354,6 +1331,16 @@ async function resolveTrackingUrl(link: AdLink) {
 
       if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
         return browserResolved;
+      }
+
+      const requestResolved = await followAffiliateRedirectWithRequest(
+        link.tracking_url,
+        proxyConnection,
+        refererUrl,
+      );
+
+      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
+        return requestResolved;
       }
 
       throw buildError(

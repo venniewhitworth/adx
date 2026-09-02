@@ -165,18 +165,22 @@ function doesOfficialUrlMatchTarget(
   targetUrl: string | null | undefined,
   officialUrl: string | null | undefined,
 ) {
-  const targetHostname = toComparableHostname(targetUrl);
-  const officialHostname = toComparableHostname(officialUrl);
+  const normalize = (value: string | null | undefined) =>
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/+$/, "") ?? "";
 
-  if (!targetHostname || !officialHostname) {
+  const targetValue = normalize(targetUrl);
+  const officialValue = normalize(officialUrl);
+
+  if (!targetValue || !officialValue) {
     return false;
   }
 
-  return (
-    targetHostname === officialHostname ||
-    targetHostname.endsWith(`.${officialHostname}`) ||
-    officialHostname.endsWith(`.${targetHostname}`)
-  );
+  return targetValue.includes(officialValue);
 }
 
 function normalizeRefererPayload(form: QuickFormState) {
