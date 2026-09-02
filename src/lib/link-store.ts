@@ -509,6 +509,19 @@ function unwrapEmbeddedRedirectUrl(rawUrl: string, maxDepth = 5) {
   return currentUrl;
 }
 
+function buildEmbeddedRedirectFallback(rawUrl: string, exitGeoInfo?: Partial<ExitGeoInfo>) {
+  const fallbackUrl = unwrapEmbeddedRedirectUrl(rawUrl);
+  if (!fallbackUrl || fallbackUrl === rawUrl) {
+    return null;
+  }
+
+  try {
+    return splitFinalUrl(fallbackUrl, exitGeoInfo);
+  } catch {
+    return null;
+  }
+}
+
 function shouldUseKookeeyProxy(link: Pick<AdLink, "proxy_provider">) {
   return link.proxy_provider?.toLowerCase().includes("kookeey") ?? false;
 }
@@ -908,6 +921,7 @@ async function resolveTrackingUrl(link: AdLink) {
     throw buildError("请先填写联盟跟踪链接", 400);
   }
 
+  const embeddedFallback = buildEmbeddedRedirectFallback(link.tracking_url);
   const refererUrl = normalizeRefererUrl(link.referer_url, link.referer_sources);
 
   if (shouldUseIprroyalProxy(link)) {
@@ -937,6 +951,10 @@ async function resolveTrackingUrl(link: AdLink) {
       }
     }
 
+    if (embeddedFallback) {
+      return embeddedFallback;
+    }
+
     throw buildError(
       `IPRoyal proxy retry failed after ${IPROYAL_RESOLVE_MAX_ATTEMPTS} attempts: ${toResolverErrorMessage(lastError)}`,
       502,
@@ -946,6 +964,13 @@ async function resolveTrackingUrl(link: AdLink) {
   if (!shouldUseKookeeyProxy(link)) {
     const resolved = await followAffiliateRedirect(link.tracking_url, refererUrl);
     if (isAffiliateTrackingUrl(resolved.finalUrl, link.tracking_url)) {
+      if (embeddedFallback) {
+        const exitGeoInfo = await detectExitGeoViaFetch();
+        return {
+          ...embeddedFallback,
+          ...exitGeoInfo,
+        };
+      }
       throw buildError(
         "The affiliate link did not leave the tracking domain, so no real merchant final URL was captured.",
         502,
@@ -989,14 +1014,18 @@ async function resolveTrackingUrl(link: AdLink) {
       if (attempt >= KOOKEEY_RESOLVE_MAX_ATTEMPTS || !isRetryableKookeeyError(error)) {
         break;
       }
+      }
     }
-  }
 
-  const detail = toResolverErrorMessage(lastError);
-  throw buildError(
-    `Kookeey proxy retry failed after ${KOOKEEY_RESOLVE_MAX_ATTEMPTS} attempts: ${detail}`,
-    502,
-  );
+    if (embeddedFallback) {
+      return embeddedFallback;
+    }
+
+    const detail = toResolverErrorMessage(lastError);
+    throw buildError(
+      `Kookeey proxy retry failed after ${KOOKEEY_RESOLVE_MAX_ATTEMPTS} attempts: ${detail}`,
+      502,
+    );
 }
 
 function getEffectiveTargetUrl(link: AdLink) {
