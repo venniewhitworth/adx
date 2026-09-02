@@ -161,26 +161,44 @@ function toComparableHostname(value: string | null | undefined) {
   }
 }
 
+function normalizeUrlForContainment(value: string) {
+  return value.trim().toLowerCase().replace(/\/+$/, "");
+}
+
 function doesOfficialUrlMatchTarget(
   targetUrl: string | null | undefined,
   officialUrl: string | null | undefined,
 ) {
-  const normalize = (value: string | null | undefined) =>
-    value
-      ?.trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/^www\./, "")
-      .replace(/\/+$/, "") ?? "";
-
-  const targetValue = normalize(targetUrl);
-  const officialValue = normalize(officialUrl);
+  const targetValue = targetUrl ? normalizeUrlForContainment(targetUrl) : "";
+  const officialValue = officialUrl ? normalizeUrlForContainment(officialUrl) : "";
 
   if (!targetValue || !officialValue) {
     return false;
   }
 
-  return targetValue.includes(officialValue);
+  if (targetValue.includes(officialValue)) {
+    return true;
+  }
+
+  try {
+    const target = new URL(targetValue);
+    const official = new URL(officialValue);
+
+    if (official.pathname !== "/" || official.search || official.hash) {
+      return false;
+    }
+
+    const targetHostname = target.hostname.trim().toLowerCase().replace(/^www\./, "");
+    const officialHostname = official.hostname.trim().toLowerCase().replace(/^www\./, "");
+
+    return (
+      targetHostname === officialHostname ||
+      targetHostname.endsWith(`.${officialHostname}`) ||
+      officialHostname.endsWith(`.${targetHostname}`)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeRefererPayload(form: QuickFormState) {

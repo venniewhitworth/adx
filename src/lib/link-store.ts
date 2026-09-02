@@ -416,18 +416,40 @@ function hostnameMatchesOrIsSubdomain(hostname: string, expected: string) {
   return hostname === expected || hostname.endsWith(`.${expected}`);
 }
 
-function doesResolvedUrlMatchOfficialUrl(resolvedUrl: string, officialUrl: string) {
-  const resolvedHostname = toComparableHostname(resolvedUrl);
-  const officialHostname = toComparableHostname(officialUrl);
+function normalizeUrlForContainment(value: string) {
+  return value.trim().toLowerCase().replace(/\/+$/, "");
+}
 
-  if (!resolvedHostname || !officialHostname) {
+function doesResolvedUrlMatchOfficialUrl(resolvedUrl: string, officialUrl: string) {
+  const normalizedResolved = normalizeUrlForContainment(resolvedUrl);
+  const normalizedOfficial = normalizeUrlForContainment(officialUrl);
+
+  if (!normalizedResolved || !normalizedOfficial) {
     return false;
   }
 
-  return (
-    hostnameMatchesOrIsSubdomain(resolvedHostname, officialHostname) ||
-    hostnameMatchesOrIsSubdomain(officialHostname, resolvedHostname)
-  );
+  if (normalizedResolved.includes(normalizedOfficial)) {
+    return true;
+  }
+
+  try {
+    const resolved = new URL(normalizedResolved);
+    const official = new URL(normalizedOfficial);
+
+    if (official.pathname !== "/" || official.search || official.hash) {
+      return false;
+    }
+
+    const resolvedHostname = resolved.hostname.trim().toLowerCase().replace(/^www\./, "");
+    const officialHostname = official.hostname.trim().toLowerCase().replace(/^www\./, "");
+
+    return (
+      hostnameMatchesOrIsSubdomain(resolvedHostname, officialHostname) ||
+      hostnameMatchesOrIsSubdomain(officialHostname, resolvedHostname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 const knownAffiliateTrackingDomains = [
@@ -522,7 +544,7 @@ function normalizeBrowserUrl(value?: string | null) {
   return value;
 }
 
-function preserveLandingQuery(landingUrl: string, settledUrl: string) {
+function preserveLandingQuery(landingUrl: string, settledUrl: string, officialUrl?: string | null) {
   if (!landingUrl || !settledUrl || landingUrl === settledUrl) {
     return settledUrl || landingUrl;
   }
@@ -531,13 +553,12 @@ function preserveLandingQuery(landingUrl: string, settledUrl: string) {
     const landing = new URL(landingUrl);
     const settled = new URL(settledUrl);
 
-    if (
-      landing.origin === settled.origin &&
-      landing.pathname === settled.pathname &&
-      landing.search &&
-      !settled.search
-    ) {
-      return landingUrl;
+    if (landing.origin === settled.origin && landing.search && !settled.search) {
+      if (!officialUrl || doesResolvedUrlMatchOfficialUrl(landingUrl, officialUrl)) {
+        return landingUrl;
+      }
+
+      return settledUrl;
     }
   } catch {
     /* ignore invalid URLs */
@@ -981,6 +1002,7 @@ async function followAffiliateRedirectWithBrowser(
   proxy: ProxyConnection | null,
   countryCode?: string | null,
   refererUrl?: string | null,
+  officialUrl?: string | null,
 ) {
   let browser: Browser;
   try {
@@ -1036,21 +1058,14 @@ async function followAffiliateRedirectWithBrowser(
 
     const responseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
     const settledUrl = normalizeBrowserUrl(page.url()) ?? responseUrl;
-    const finalUrl = preserveLandingQuery(responseUrl, settledUrl);
+    const finalUrl = preserveLandingQuery(responseUrl, settledUrl, officialUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
     const finalStableUrl = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
-    const browserFinalUrl = preserveLandingQuery(finalUrl, finalStableUrl);
-
-    if (isAffiliateTrackingUrl(browserFinalUrl, trackingUrl)) {
-      throw buildError(
-        "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
-        502,
-      );
-    }
+    const browserFinalUrl = preserveLandingQuery(finalUrl, finalStableUrl, officialUrl);
 
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
     return splitFinalUrl(browserFinalUrl, exitGeoInfo);
@@ -1210,30 +1225,12 @@ async function resolveTrackingUrl(link: AdLink) {
           );
         }
 
-        const browserResolved = await followAffiliateRedirectWithBrowser(
+        return await followAffiliateRedirectWithBrowser(
           link.tracking_url,
           proxyConnection,
           link.country_code,
           refererUrl,
-        );
-
-        if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
-          return browserResolved;
-        }
-
-        const requestResolved = await followAffiliateRedirectWithRequest(
-          link.tracking_url,
-          proxyConnection,
-          refererUrl,
-        );
-
-        if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
-          return requestResolved;
-        }
-
-        throw buildError(
-          "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
-          502,
+          link.official_url,
         );
       } catch (error) {
         lastError = error;
@@ -1255,53 +1252,25 @@ async function resolveTrackingUrl(link: AdLink) {
 
   if (!shouldUseKookeeyProxy(link)) {
     try {
-      const browserResolved = await followAffiliateRedirectWithBrowser(
+      return await followAffiliateRedirectWithBrowser(
         link.tracking_url,
         null,
         link.country_code,
         refererUrl,
+        link.official_url,
       );
-
-      if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
-        return browserResolved;
-      }
     } catch (error) {
       lastError = error;
     }
 
-    try {
-      const requestResolved = await followAffiliateRedirectWithRequest(
-        link.tracking_url,
-        null,
-        refererUrl,
-      );
-
-      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
-        return requestResolved;
-      }
-    } catch (error) {
-      lastError = error;
+    if (embeddedFallback) {
+      return embeddedFallback;
     }
 
-    const resolved = await followAffiliateRedirect(link.tracking_url, refererUrl);
-    if (isAffiliateTrackingUrl(resolved.finalUrl, link.tracking_url)) {
-      if (embeddedFallback) {
-        const exitGeoInfo = await detectExitGeoViaFetch();
-        return {
-          ...embeddedFallback,
-          ...exitGeoInfo,
-        };
-      }
-      throw buildError(
-        "The affiliate link did not leave the tracking domain, so no real merchant final URL was captured.",
-        502,
-      );
-    }
-    const exitGeoInfo = await detectExitGeoViaFetch();
-    return {
-      ...resolved,
-      ...exitGeoInfo,
-    };
+    throw buildError(
+      `Browser resolution failed: ${toResolverErrorMessage(lastError)}`,
+      502,
+    );
   }
 
   const apiUrl = getKookeeyPickApiUrl(link);
@@ -1327,43 +1296,27 @@ async function resolveTrackingUrl(link: AdLink) {
         proxyConnection,
         link.country_code,
         refererUrl,
+        link.official_url,
       );
 
-      if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
-        return browserResolved;
-      }
-
-      const requestResolved = await followAffiliateRedirectWithRequest(
-        link.tracking_url,
-        proxyConnection,
-        refererUrl,
-      );
-
-      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
-        return requestResolved;
-      }
-
-      throw buildError(
-        "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
-        502,
-      );
+      return browserResolved;
     } catch (error) {
       lastError = error;
       if (attempt >= KOOKEEY_RESOLVE_MAX_ATTEMPTS || !isRetryableKookeeyError(error)) {
         break;
       }
-      }
     }
+  }
 
-    if (embeddedFallback) {
-      return embeddedFallback;
-    }
+  if (embeddedFallback) {
+    return embeddedFallback;
+  }
 
-    const detail = toResolverErrorMessage(lastError);
-    throw buildError(
-      `Kookeey proxy retry failed after ${KOOKEEY_RESOLVE_MAX_ATTEMPTS} attempts: ${detail}`,
-      502,
-    );
+  const detail = toResolverErrorMessage(lastError);
+  throw buildError(
+    `Kookeey proxy retry failed after ${KOOKEEY_RESOLVE_MAX_ATTEMPTS} attempts: ${detail}`,
+    502,
+  );
 }
 
 function getEffectiveTargetUrl(link: AdLink) {
