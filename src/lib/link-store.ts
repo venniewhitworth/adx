@@ -430,12 +430,6 @@ function doesResolvedUrlMatchOfficialUrl(resolvedUrl: string, officialUrl: strin
   );
 }
 
-function assertTargetUrlMatchesOfficialUrl(targetUrl: string, officialUrl: string) {
-  if (!doesResolvedUrlMatchOfficialUrl(targetUrl, officialUrl)) {
-    throw buildError("手动填写的最终 URL 和官网地址/域名不一致");
-  }
-}
-
 const knownAffiliateTrackingDomains = [
   "linkhaitao.com",
   "fatcoupon.com",
@@ -1438,10 +1432,6 @@ function buildPendingGoogleAdsSyncItem(link: AdLink): GoogleAdsPendingSyncItem |
     return null;
   }
 
-  if (link.official_url && !doesResolvedUrlMatchOfficialUrl(link.target_url, link.official_url)) {
-    return null;
-  }
-
   return {
     link_id: link.id,
     slug: link.slug,
@@ -1579,9 +1569,6 @@ function validateCreateInput(input: AdLinkCreate) {
   if (targetUrl) assertValidUrl(targetUrl);
   if (officialUrl) assertValidOfficialUrl(officialUrl);
   if (trackingUrl) assertValidUrl(trackingUrl);
-  if (targetUrl && officialUrl) {
-    assertTargetUrlMatchesOfficialUrl(targetUrl, officialUrl);
-  }
 
   assertDailyClicksRange(clicksPerDayMin, clicksPerDayMax);
 
@@ -1905,10 +1892,6 @@ export async function updateLink(id: number, input: AdLinkUpdate) {
       nextLink.final_url_query = null;
     }
 
-    if (nextLink.target_url && nextLink.official_url) {
-      assertTargetUrlMatchesOfficialUrl(nextLink.target_url, nextLink.official_url);
-    }
-
     const autoSwapConfigChanged =
       update.auto_swap_enabled !== undefined ||
       update.auto_swap_interval_minutes !== undefined ||
@@ -2055,17 +2038,6 @@ export async function refreshFinalUrl(id: number) {
         resolved.resolvedCountryName ?? link.last_resolved_country_name;
       link.google_ads_last_sync_error = null;
       link.updated_at = now;
-
-      if (
-        link.official_url &&
-        !doesResolvedUrlMatchOfficialUrl(resolved.finalUrl, link.official_url)
-      ) {
-        const resolvedHostname = toComparableHostname(resolved.finalUrl) ?? resolved.finalUrl;
-        link.resolve_status = "error";
-        link.last_resolve_error =
-          `当前解析结果的域名 ${resolvedHostname} 和官网地址/域名 ${link.official_url} 不一致，只有命中这个官网域名才算成功。`;
-        throw buildError(link.last_resolve_error, 409);
-      }
 
       link.resolve_status = changed ? "changed" : "resolved";
 

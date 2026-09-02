@@ -929,7 +929,7 @@ export default function DashboardPage() {
                   </p>
                 ) : null}
                 <p className="mt-3 text-sm leading-7 text-[#7D6E65]">
-                  第一次使用时先填名字、联盟链接、官网地址/域名、国家和 Referer。只要最终落地域名命中这里填写的官网域名，这条记录就算成功。
+                  第一次使用时先填名字、联盟链接、官网地址/域名、国家和 Referer。系统会先拿真实最终 URL，官网地址这里只做参考校验，不再拦截解析。
                 </p>
               </div>
               <button
@@ -974,7 +974,7 @@ export default function DashboardPage() {
                   className={fieldClassName}
                 />
                 <p className="mt-2 text-xs leading-6 text-[#AA9E96]">
-                  这个值专门用来做成功判定。只要最终落地域名和这里一致，就算解析成功。
+                  这个值现在只做参考校验。即使不一致，也不会影响真实最终 URL 的保存。
                 </p>
               </div>
 
