@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, request, type APIResponse, type Browser, type Page } from "playwright";
 import {
   defaultRefreshFinalUrlInterval,
   refreshFinalUrlIntervalOptions,
@@ -113,6 +113,26 @@ function ensurePlaywrightBrowserPath() {
 
 function buildError(detail: string, status = 400) {
   return Object.assign(new Error(detail), { status });
+}
+
+function buildDefaultProxyRequestHeaders(refererUrl?: string | null) {
+  return {
+    ...defaultRequestHeaders,
+    ...(refererUrl ? { Referer: refererUrl } : {}),
+  };
+}
+
+function getResponseLocation(response: APIResponse) {
+  const headers = response.headers();
+  return headers.location || headers.Location || null;
+}
+
+function resolveRedirectLocation(location: string, baseUrl: string) {
+  try {
+    return new URL(location, baseUrl).href;
+  } catch {
+    return null;
+  }
 }
 
 function toResolverErrorMessage(error: unknown) {
@@ -434,6 +454,8 @@ function extractHtmlRedirectUrl(html: string, baseUrl: string): string | null {
     /location\.href\s*=\s*(["'])([^"']+)\2/i,
     /window\.location\s*=\s*(["'])([^"']+)\1/i,
     /window\.location\.replace\((["'])([^"']+)\1\)/i,
+    /location\.assign\((["'])([^"']+)\1\)/i,
+    /window\.location\.assign\((["'])([^"']+)\1\)/i,
   ];
   for (const pattern of jsPatterns) {
     const match = html.match(pattern);
@@ -1003,6 +1025,77 @@ async function followAffiliateRedirectWithBrowser(
   }
 }
 
+async function followAffiliateRedirectWithRequest(
+  trackingUrl: string,
+  proxy: ProxyConnection | null,
+  refererUrl?: string | null,
+  maxDepth = 8,
+) {
+  const context = await request.newContext({
+    proxy: proxy
+      ? {
+          server: proxy.server,
+          username: proxy.username,
+          password: proxy.password,
+        }
+      : undefined,
+    ignoreHTTPSErrors: true,
+    maxRedirects: 0,
+    timeout: 30000,
+    extraHTTPHeaders: buildDefaultProxyRequestHeaders(refererUrl),
+  });
+
+  try {
+    let currentUrl = trackingUrl;
+    const visited = new Set<string>();
+
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+      if (visited.has(currentUrl)) {
+        throw buildError("检测到循环重定向", 502);
+      }
+      visited.add(currentUrl);
+
+      const response = await context.get(currentUrl, {
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      });
+
+      const status = response.status();
+      const contentType = response.headers()["content-type"] || "";
+      const finalUrl = response.url() || currentUrl;
+
+      if (status >= 300 && status < 400) {
+        const location = getResponseLocation(response);
+        const nextUrl = location ? resolveRedirectLocation(location, finalUrl) : null;
+
+        if (!nextUrl || nextUrl === currentUrl) {
+          return splitFinalUrl(finalUrl);
+        }
+
+        currentUrl = nextUrl;
+        continue;
+      }
+
+      if (!contentType.includes("text/html")) {
+        return splitFinalUrl(finalUrl);
+      }
+
+      const html = await response.text();
+      const nextUrl = extractHtmlRedirectUrl(html, finalUrl) ?? extractEmbeddedRedirectUrl(finalUrl);
+
+      if (!nextUrl || nextUrl === finalUrl) {
+        return splitFinalUrl(finalUrl);
+      }
+
+      currentUrl = nextUrl;
+    }
+
+    throw buildError("重定向次数过多", 502);
+  } finally {
+    await context.dispose().catch(() => undefined);
+  }
+}
+
 async function followAffiliateRedirect(
   trackingUrl: string,
   refererUrl?: string | null,
@@ -1061,10 +1154,9 @@ async function resolveTrackingUrl(link: AdLink) {
 
   const embeddedFallback = buildEmbeddedRedirectFallback(link.tracking_url);
   const refererUrl = normalizeRefererUrl(link.referer_url, link.referer_sources);
+  let lastError: unknown = null;
 
   if (shouldUseIprroyalProxy(link)) {
-    let lastError: unknown = null;
-
     for (let attempt = 1; attempt <= IPROYAL_RESOLVE_MAX_ATTEMPTS; attempt += 1) {
       try {
         const proxyConnection = getIprroyalProxyConnection();
@@ -1075,11 +1167,30 @@ async function resolveTrackingUrl(link: AdLink) {
           );
         }
 
-        return await followAffiliateRedirectWithBrowser(
+        const requestResolved = await followAffiliateRedirectWithRequest(
+          link.tracking_url,
+          proxyConnection,
+          refererUrl,
+        );
+
+        if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
+          return requestResolved;
+        }
+
+        const browserResolved = await followAffiliateRedirectWithBrowser(
           link.tracking_url,
           proxyConnection,
           link.country_code,
           refererUrl,
+        );
+
+        if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
+          return browserResolved;
+        }
+
+        throw buildError(
+          "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
+          502,
         );
       } catch (error) {
         lastError = error;
@@ -1100,6 +1211,20 @@ async function resolveTrackingUrl(link: AdLink) {
   }
 
   if (!shouldUseKookeeyProxy(link)) {
+    try {
+      const requestResolved = await followAffiliateRedirectWithRequest(
+        link.tracking_url,
+        null,
+        refererUrl,
+      );
+
+      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
+        return requestResolved;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
     const resolved = await followAffiliateRedirect(link.tracking_url, refererUrl);
     if (isAffiliateTrackingUrl(resolved.finalUrl, link.tracking_url)) {
       if (embeddedFallback) {
@@ -1126,8 +1251,6 @@ async function resolveTrackingUrl(link: AdLink) {
     throw buildError("Kookeey proxy is selected but KOOKEEY_PICK_API_URL is not configured", 500);
   }
 
-  let lastError: unknown = null;
-
   for (let attempt = 1; attempt <= KOOKEEY_RESOLVE_MAX_ATTEMPTS; attempt += 1) {
     try {
       const proxyConnection = await fetchKookeeyProxyConnection(apiUrl);
@@ -1141,11 +1264,30 @@ async function resolveTrackingUrl(link: AdLink) {
         );
       }
 
-      return await followAffiliateRedirectWithBrowser(
+      const requestResolved = await followAffiliateRedirectWithRequest(
+        link.tracking_url,
+        proxyConnection,
+        refererUrl,
+      );
+
+      if (!isAffiliateTrackingUrl(requestResolved.finalUrl, link.tracking_url)) {
+        return requestResolved;
+      }
+
+      const browserResolved = await followAffiliateRedirectWithBrowser(
         link.tracking_url,
         proxyConnection,
         link.country_code,
         refererUrl,
+      );
+
+      if (!isAffiliateTrackingUrl(browserResolved.finalUrl, link.tracking_url)) {
+        return browserResolved;
+      }
+
+      throw buildError(
+        "The proxy opened the affiliate link, but it never left the tracking domain. This run did not reach the real merchant final URL.",
+        502,
       );
     } catch (error) {
       lastError = error;
