@@ -443,6 +443,7 @@ const knownAffiliateTrackingDomains = [
   "redirect.partner.fatcoupon.com",
   "afflat3a2.com",
   "trkta.com",
+  "engagevantage.com",
 ];
 
 function isKnownAffiliateTrackingHostname(hostname: string) {
@@ -592,6 +593,13 @@ function decodeRedirectCandidate(value: string) {
 function extractEmbeddedRedirectUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
+    const tryResolveCandidate = (candidate: string) => {
+      try {
+        return new URL(candidate, url.href).href;
+      } catch {
+        return null;
+      }
+    };
 
     for (const [key, value] of url.searchParams.entries()) {
       if (!embeddedRedirectParamNames.has(key.toLowerCase())) {
@@ -603,10 +611,23 @@ function extractEmbeddedRedirectUrl(rawUrl: string) {
         continue;
       }
 
-      try {
-        return new URL(candidate, url.href).href;
-      } catch {
-        /* ignore invalid embedded URLs */
+      const resolved = tryResolveCandidate(candidate);
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    if (isKnownAffiliateTrackingHostname(url.hostname)) {
+      for (const value of url.searchParams.values()) {
+        const candidate = decodeRedirectCandidate(value);
+        if (!candidate) {
+          continue;
+        }
+
+        const resolved = tryResolveCandidate(candidate);
+        if (resolved) {
+          return resolved;
+        }
       }
     }
   } catch {
