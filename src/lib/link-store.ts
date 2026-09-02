@@ -395,6 +395,7 @@ const knownAffiliateTrackingDomains = [
   "partner.fatcoupon.com",
   "redirect.partner.fatcoupon.com",
   "afflat3a2.com",
+  "trkta.com",
 ];
 
 function isKnownAffiliateTrackingHostname(hostname: string) {
@@ -1072,6 +1073,10 @@ async function followAffiliateRedirectWithRequest(
           return splitFinalUrl(finalUrl);
         }
 
+        if (isKnownAffiliateTrackingUrl(finalUrl) && !isKnownAffiliateTrackingUrl(nextUrl)) {
+          return splitFinalUrl(nextUrl);
+        }
+
         currentUrl = nextUrl;
         continue;
       }
@@ -1085,6 +1090,10 @@ async function followAffiliateRedirectWithRequest(
 
       if (!nextUrl || nextUrl === finalUrl) {
         return splitFinalUrl(finalUrl);
+      }
+
+      if (isKnownAffiliateTrackingUrl(finalUrl) && !isKnownAffiliateTrackingUrl(nextUrl)) {
+        return splitFinalUrl(nextUrl);
       }
 
       currentUrl = nextUrl;
