@@ -790,7 +790,6 @@ async function followAffiliateRedirectWithBrowser(
   countryCode?: string | null,
   refererUrl?: string | null,
 ) {
-  const initialUrl = unwrapEmbeddedRedirectUrl(trackingUrl);
   let browser: Browser;
   try {
     ensurePlaywrightBrowserPath();
@@ -818,7 +817,7 @@ async function followAffiliateRedirectWithBrowser(
   });
 
   const page = await context.newPage();
-  let finalUrl = initialUrl;
+  let finalUrl = trackingUrl;
 
   try {
     if (refererUrl) {
@@ -827,7 +826,7 @@ async function followAffiliateRedirectWithBrowser(
       });
     }
 
-    await page.goto(initialUrl, {
+    await page.goto(trackingUrl, {
       waitUntil: "domcontentloaded",
       timeout: 45000,
       referer: refererUrl ?? undefined,
@@ -839,7 +838,7 @@ async function followAffiliateRedirectWithBrowser(
       /* some landing pages keep connections open */
     }
 
-    finalUrl = await waitForPageUrlChange(page, initialUrl);
+    finalUrl = await waitForPageUrlChange(page, trackingUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
@@ -847,18 +846,14 @@ async function followAffiliateRedirectWithBrowser(
 
     const html = await page.content().catch(() => "");
     const htmlRedirectUrl = html ? extractHtmlRedirectUrl(html, finalUrl) : null;
-    const embeddedRedirectUrl = extractEmbeddedRedirectUrl(finalUrl);
-
-    const nextUrl = htmlRedirectUrl ?? embeddedRedirectUrl;
-    if (typeof nextUrl === "string" && nextUrl !== finalUrl) {
+    if (typeof htmlRedirectUrl === "string" && htmlRedirectUrl !== finalUrl) {
+      const nextUrl = htmlRedirectUrl;
       await page.goto(nextUrl, {
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
       finalUrl = await waitForPageUrlChange(page, nextUrl, 5);
     }
-
-    finalUrl = unwrapEmbeddedRedirectUrl(finalUrl);
 
     if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
       throw buildError(
@@ -880,7 +875,7 @@ async function followAffiliateRedirect(
   refererUrl?: string | null,
   maxDepth = 5,
 ) {
-  let currentUrl = unwrapEmbeddedRedirectUrl(trackingUrl, maxDepth);
+  let currentUrl = trackingUrl;
   const visited = new Set<string>();
 
   for (let depth = 0; depth < maxDepth; depth++) {
@@ -904,7 +899,7 @@ async function followAffiliateRedirect(
     }
 
     const contentType = response.headers.get("content-type") || "";
-    const finalUrl = unwrapEmbeddedRedirectUrl(response.url || currentUrl, maxDepth);
+    const finalUrl = response.url || currentUrl;
 
     // 不是 HTML，大概率已到达最终页面
     if (!contentType.includes("text/html")) {
