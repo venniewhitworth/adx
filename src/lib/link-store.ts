@@ -377,6 +377,22 @@ const knownAffiliateTrackingDomains = [
   "afflat3a2.com",
 ];
 
+function isKnownAffiliateTrackingHostname(hostname: string) {
+  const normalizedHostname = hostname.toLowerCase();
+
+  return knownAffiliateTrackingDomains.some((domain) =>
+    hostnameMatchesOrIsSubdomain(normalizedHostname, domain),
+  );
+}
+
+function isKnownAffiliateTrackingUrl(rawUrl: string) {
+  try {
+    return isKnownAffiliateTrackingHostname(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isAffiliateTrackingUrl(finalUrl: string, trackingUrl: string) {
   try {
     const final = new URL(finalUrl);
@@ -431,6 +447,14 @@ function extractHtmlRedirectUrl(html: string, baseUrl: string): string | null {
   }
 
   return null;
+}
+
+function normalizeBrowserUrl(value?: string | null) {
+  if (!value || value === "about:blank" || value.startsWith("chrome-error://")) {
+    return null;
+  }
+
+  return value;
 }
 
 const embeddedRedirectParamNames = new Set([
@@ -517,6 +541,41 @@ function unwrapEmbeddedRedirectUrl(rawUrl: string, maxDepth = 5) {
   }
 
   return currentUrl;
+}
+
+function pickBrowserRedirectUrl(
+  pageUrl: string,
+  responseUrl?: string | null,
+  html?: string,
+) {
+  const candidates: string[] = [];
+
+  const pushCandidate = (value?: string | null) => {
+    const normalized = normalizeBrowserUrl(value);
+    if (!normalized || normalized === pageUrl || candidates.includes(normalized)) {
+      return;
+    }
+
+    candidates.push(normalized);
+  };
+
+  for (const rawUrl of [responseUrl, pageUrl]) {
+    if (!rawUrl) {
+      continue;
+    }
+
+    pushCandidate(extractEmbeddedRedirectUrl(rawUrl));
+  }
+
+  if (html) {
+    pushCandidate(extractHtmlRedirectUrl(html, responseUrl ?? pageUrl));
+
+    if (responseUrl && responseUrl !== pageUrl && isKnownAffiliateTrackingUrl(pageUrl)) {
+      pushCandidate(extractHtmlRedirectUrl(html, pageUrl));
+    }
+  }
+
+  return candidates[0] ?? null;
 }
 
 function buildEmbeddedRedirectFallback(rawUrl: string, exitGeoInfo?: Partial<ExitGeoInfo>) {
@@ -775,18 +834,32 @@ async function detectExitGeoViaBrowser(page: Page): Promise<ExitGeoInfo> {
   }
 }
 
-async function waitForPageUrlChange(page: Page, baselineUrl: string, attempts = 12, delayMs = 1000) {
-  let currentUrl = page.url() || baselineUrl;
+async function waitForStablePageUrl(
+  page: Page,
+  baselineUrl: string,
+  totalWaitMs = 8000,
+  idleWaitMs = 1200,
+  pollMs = 250,
+) {
+  let currentUrl = normalizeBrowserUrl(page.url()) ?? baselineUrl;
+  let lastChangeAt = Date.now();
+  const startedAt = lastChangeAt;
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await page.waitForTimeout(delayMs);
-    const nextUrl = page.url();
-    if (!nextUrl || nextUrl === "about:blank" || nextUrl.startsWith("chrome-error://")) {
+  while (Date.now() - startedAt < totalWaitMs) {
+    await page.waitForTimeout(pollMs);
+    const nextUrl = normalizeBrowserUrl(page.url());
+
+    if (!nextUrl) {
       continue;
     }
 
-    currentUrl = nextUrl;
-    if (nextUrl !== baselineUrl) {
+    if (nextUrl !== currentUrl) {
+      currentUrl = nextUrl;
+      lastChangeAt = Date.now();
+      continue;
+    }
+
+    if (Date.now() - lastChangeAt >= idleWaitMs) {
       break;
     }
   }
@@ -836,7 +909,8 @@ async function followAffiliateRedirectWithBrowser(
       });
     }
 
-    await page.goto(trackingUrl, {
+    const entryUrl = extractEmbeddedRedirectUrl(trackingUrl) ?? trackingUrl;
+    const initialResponse = await page.goto(entryUrl, {
       waitUntil: "domcontentloaded",
       timeout: 45000,
       referer: refererUrl ?? undefined,
@@ -848,27 +922,34 @@ async function followAffiliateRedirectWithBrowser(
       /* some landing pages keep connections open */
     }
 
-    finalUrl = await waitForPageUrlChange(page, trackingUrl);
+    let lastResponseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
+    finalUrl = normalizeBrowserUrl(page.url()) ?? lastResponseUrl;
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
     for (let redirectDepth = 0; redirectDepth < 5; redirectDepth += 1) {
+      const currentPageUrl = normalizeBrowserUrl(page.url()) ?? finalUrl;
       const html = await page.content().catch(() => "");
-      const nextUrl =
-        (html ? extractHtmlRedirectUrl(html, finalUrl) : null) ??
-        extractEmbeddedRedirectUrl(finalUrl);
+      const nextUrl = pickBrowserRedirectUrl(currentPageUrl, lastResponseUrl, html);
+      const settledUrl = await waitForStablePageUrl(page, currentPageUrl, 5000, 1000);
+      finalUrl = settledUrl;
 
       if (typeof nextUrl !== "string" || nextUrl === finalUrl) {
+        if (settledUrl !== currentPageUrl) {
+          lastResponseUrl = settledUrl;
+          continue;
+        }
         break;
       }
 
-      await page.goto(nextUrl, {
+      const response = await page.goto(nextUrl, {
         waitUntil: "domcontentloaded",
         timeout: 20000,
       });
-      finalUrl = await waitForPageUrlChange(page, nextUrl, 5);
+      lastResponseUrl = normalizeBrowserUrl(response?.url()) ?? nextUrl;
+      finalUrl = await waitForStablePageUrl(page, lastResponseUrl, 7000, 1200);
 
       try {
         await page.waitForLoadState("networkidle", { timeout: 3000 });
@@ -876,6 +957,8 @@ async function followAffiliateRedirectWithBrowser(
         /* ignore long-polling pages */
       }
     }
+
+    finalUrl = await waitForStablePageUrl(page, finalUrl, 4000, 1200);
 
     if (isAffiliateTrackingUrl(finalUrl, trackingUrl)) {
       throw buildError(
