@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -575,6 +575,7 @@ function ScriptSetupCard({
 }
 
 export default function DashboardPage() {
+  const editorSectionRef = useRef<HTMLElement | null>(null);
   const [links, setLinks] = useState<AdLink[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [form, setForm] = useState<QuickFormState>(createEmptyFormState);
@@ -799,7 +800,10 @@ export default function DashboardPage() {
     setEditingLinkId(link.id);
     setSelectedLinkId(link.id);
     setForm(createFormStateFromLink(link));
-    setShowAdvanced(Boolean(link.offer || link.offer_id || link.google_ads_customer_id || link.google_ads_entity_id));
+    setShowAdvanced(true);
+    window.setTimeout(() => {
+      editorSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
   }
 
   return (
@@ -835,7 +839,7 @@ export default function DashboardPage() {
         ) : null}
 
         <section className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
-          <section className={`${panelClassName} p-6`}>
+          <section ref={editorSectionRef} className={`${panelClassName} p-6`}>
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-[#E8DDD2] bg-[#FBF6F1] px-3 py-1 text-xs font-medium text-[#9A8E87]">
@@ -845,6 +849,11 @@ export default function DashboardPage() {
                 <h1 className="mt-3 text-3xl font-light tracking-[-0.03em] text-[#3D3530]">
                   {editingLinkId ? "编辑并重新解析" : "保存并解析一条新链接"}
                 </h1>
+                {editingLinkId ? (
+                  <p className="mt-2 text-sm font-medium text-[#C47A4A]">
+                    正在编辑：{form.name || `ID ${editingLinkId}`}
+                  </p>
+                ) : null}
                 <p className="mt-3 text-sm leading-7 text-[#7D6E65]">
                   第一次使用时只管填名字、联盟链接、国家和 Referer。短码会在系统内部自动生成，保存后系统会马上解析，右侧直接给你结果。
                 </p>
