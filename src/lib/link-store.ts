@@ -951,6 +951,21 @@ type BrowserUrlCapture = {
   candidates: string[];
 };
 
+type RedirectTrace = {
+  chain: string[];
+  finalUrl: string;
+  bodyText: string;
+  exitGeoInfo?: Partial<ExitGeoInfo>;
+};
+
+type TrackingCandidate = {
+  sourceUrl: string;
+  landingUrl: string;
+  landingDomain: string;
+  trackingParams: string;
+  hasStrongSignal: boolean;
+};
+
 async function waitForStablePageUrl(
   page: Page,
   baselineUrl: string,
@@ -1021,8 +1036,7 @@ function landingDomainMatchesOfficialUrl(landingUrl: string, officialUrl: string
   return (
     landingDomain === officialDomain ||
     landingDomain.endsWith(`.${officialDomain}`) ||
-    officialDomain.endsWith(`.${landingDomain}`) ||
-    normalizeUrlForContainment(landingUrl).includes(normalizeUrlForContainment(officialUrl))
+    officialDomain.endsWith(`.${landingDomain}`)
   );
 }
 
@@ -1055,98 +1069,223 @@ function hasMeaningfulLandingDetails(rawUrl: string) {
   }
 }
 
-function scoreResolvedUrlCandidate(
-  resolvedUrl: string,
-  trackingUrl: string,
-  officialUrl?: string | null,
-) {
-  let score = 0;
+const authKeywords = [
+  "access denied",
+  "captcha",
+  "cloudflare",
+  "forbidden",
+  "human verification",
+  "login",
+  "sign in",
+  "verify you are human",
+];
 
-  if (officialUrl && doesResolvedUrlMatchOfficialUrl(resolvedUrl, officialUrl)) {
-    score += 100;
-  }
+const strongTrackingParamNames = new Set([
+  "click",
+  "clickid",
+  "click_id",
+  "clickref",
+  "click_ref",
+  "dclid",
+  "eid",
+  "irclickid",
+  "mid",
+  "pid",
+  "cid",
+  "reqid",
+  "ranmid",
+  "raneaid",
+  "ransiteid",
+  "sid",
+  "s1",
+  "subid",
+  "sub_id",
+  "subid1",
+  "subid2",
+  "subid3",
+  "subid4",
+  "subid5",
+  "sub1",
+  "sub2",
+  "sub3",
+  "sub4",
+  "sub5",
+  "traceid",
+]);
 
-  if (!isAffiliateTrackingUrl(resolvedUrl, trackingUrl)) {
-    score += 40;
-  }
+const weakTrackingParamNames = new Set([
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+]);
 
-  if (hasMeaningfulLandingDetails(resolvedUrl)) {
-    score += 30;
-  }
+function dedupeUrlsPreserveOrder(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const result: string[] = [];
 
-  try {
-    const url = new URL(resolvedUrl);
-    if (url.pathname && url.pathname !== "/") {
-      score += 10;
-    }
-  } catch {
-    /* ignore invalid URL */
-  }
-
-  return score;
-}
-
-function isResolvedUrlStrongEnough(
-  resolved: ResolveResult,
-  trackingUrl: string,
-  officialUrl?: string | null,
-) {
-  if (!resolved.finalUrl || isAffiliateTrackingUrl(resolved.finalUrl, trackingUrl)) {
-    return false;
-  }
-
-  if (officialUrl && !doesResolvedUrlMatchOfficialUrl(resolved.finalUrl, officialUrl)) {
-    return false;
-  }
-
-  return hasMeaningfulLandingDetails(resolved.finalUrl);
-}
-
-function pickPreferredResolvedResult(
-  candidates: Array<ResolveResult | null | undefined>,
-  trackingUrl: string,
-  officialUrl?: string | null,
-) {
-  let bestCandidate: ResolveResult | null = null;
-  let bestScore = Number.NEGATIVE_INFINITY;
-
-  for (const candidate of candidates) {
-    if (!candidate?.finalUrl) {
+  for (const value of values) {
+    const normalized = normalizeBrowserUrl(value);
+    if (!normalized || seen.has(normalized)) {
       continue;
     }
 
-    const score = scoreResolvedUrlCandidate(candidate.finalUrl, trackingUrl, officialUrl);
-    if (score > bestScore) {
-      bestCandidate = candidate;
-      bestScore = score;
-    }
+    seen.add(normalized);
+    result.push(normalized);
   }
 
-  return bestCandidate;
+  return result;
 }
 
-function pickLandingCandidateFromChain(chain: string[], officialUrl?: string | null) {
-  const urls = [...new Set(chain.map((value) => normalizeBrowserUrl(value)).filter((value): value is string => Boolean(value)))];
-  let officialMatch: string | null = null;
-  let fallbackMatch: string | null = null;
+function detectAuthOrChallenge(finalUrl: string, bodyText: string) {
+  const path = (() => {
+    try {
+      return new URL(finalUrl).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
 
-  for (const url of urls) {
-    if (isKnownAffiliateTrackingUrl(url)) {
+  if (
+    path.includes("/login") ||
+    path.includes("/signin") ||
+    path.includes("/captcha") ||
+    path.includes("/challenge") ||
+    path.includes("/access-denied")
+  ) {
+    return true;
+  }
+
+  const loweredBody = bodyText.toLowerCase();
+  return authKeywords.some((keyword) => loweredBody.includes(keyword));
+}
+
+function assertNotGatewayDomain(landingUrl: string) {
+  if (isKnownAffiliateTrackingUrl(landingUrl)) {
+    throw buildError("最终仍停留在联盟网关域名。", 502);
+  }
+}
+
+function isStrongTrackingParamName(name: string) {
+  const normalized = name.toLowerCase();
+  return strongTrackingParamNames.has(normalized);
+}
+
+function isWeakTrackingParamName(name: string) {
+  const normalized = name.toLowerCase();
+  return weakTrackingParamNames.has(normalized) || normalized.startsWith("utm_");
+}
+
+function toTrackingQuery(pairs: Array<[string, string]>) {
+  return pairs.map(([key, value]) => `${key}=${value}`).join("&");
+}
+
+function extractTrackingCandidateFromChain(
+  chain: string[],
+  officialUrl?: string | null,
+): TrackingCandidate {
+  let bestStrong: TrackingCandidate | null = null;
+  let bestWeak: TrackingCandidate | null = null;
+
+  for (const rawUrl of dedupeUrlsPreserveOrder(chain)) {
+    if (isKnownAffiliateTrackingUrl(rawUrl)) {
       continue;
     }
 
-    if (!hasMeaningfulLandingDetails(url)) {
+    if (officialUrl && !landingDomainMatchesOfficialUrl(rawUrl, officialUrl)) {
       continue;
     }
 
-    fallbackMatch = url;
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      continue;
+    }
 
-    if (officialUrl && landingDomainMatchesOfficialUrl(url, officialUrl)) {
-      officialMatch = url;
+    const filteredParams = [...parsed.searchParams.entries()].filter(
+      ([key, value]) => !isRedirectPlaceholderParam(key) && value.trim(),
+    );
+
+    if (!filteredParams.length) {
+      continue;
+    }
+
+    const strongPairs = filteredParams.filter(([key]) => isStrongTrackingParamName(key));
+    if (strongPairs.length) {
+      bestStrong = {
+        sourceUrl: rawUrl,
+        landingUrl: rawUrl,
+        landingDomain: normalizeDomainFromUrl(rawUrl),
+        trackingParams: toTrackingQuery(filteredParams),
+        hasStrongSignal: true,
+      };
+    }
+
+    const weakPairs = filteredParams.filter(([key]) => isWeakTrackingParamName(key));
+    if (weakPairs.length) {
+      bestWeak = {
+        sourceUrl: rawUrl,
+        landingUrl: rawUrl,
+        landingDomain: normalizeDomainFromUrl(rawUrl),
+        trackingParams: toTrackingQuery(filteredParams),
+        hasStrongSignal: false,
+      };
     }
   }
 
-  return officialMatch ?? fallbackMatch;
+  const candidate = bestStrong ?? bestWeak;
+  if (!candidate) {
+    throw buildError("未发现可用的 tracking 参数。", 502);
+  }
+
+  return candidate;
+}
+
+function pickLandingUrlFromTrace(trace: RedirectTrace, officialUrl?: string | null) {
+  const nonGatewayChain = dedupeUrlsPreserveOrder(trace.chain).filter(
+    (url) => !isKnownAffiliateTrackingUrl(url),
+  );
+  const officialChain = officialUrl
+    ? nonGatewayChain.filter((url) => landingDomainMatchesOfficialUrl(url, officialUrl))
+    : nonGatewayChain;
+  const meaningfulChain = officialChain.filter((url) => hasMeaningfulLandingDetails(url));
+  const finalUrlMatchesOfficial =
+    !officialUrl || landingDomainMatchesOfficialUrl(trace.finalUrl, officialUrl);
+
+  return (
+    meaningfulChain.at(-1) ??
+    officialChain.at(-1) ??
+    (finalUrlMatchesOfficial ? trace.finalUrl : null)
+  );
+}
+
+function buildResolvedUrl(landingUrl: string, trackingParams: string) {
+  const url = new URL(landingUrl);
+  url.search = trackingParams ? `?${trackingParams.replace(/^\?/, "")}` : "";
+  return url.toString();
+}
+
+function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | null) {
+  const landingUrl = pickLandingUrlFromTrace(trace, officialUrl);
+  if (!landingUrl) {
+    throw buildError("最终品牌官网域名与预期不一致。", 502);
+  }
+
+  if (detectAuthOrChallenge(landingUrl, trace.bodyText)) {
+    throw buildError("最终页面为登录页、验证码页或访问受限页面。", 502);
+  }
+
+  assertNotGatewayDomain(landingUrl);
+
+  if (officialUrl && !landingDomainMatchesOfficialUrl(landingUrl, officialUrl)) {
+    throw buildError("最终品牌官网域名与预期不一致。", 502);
+  }
+
+  const candidate = extractTrackingCandidateFromChain(trace.chain, officialUrl);
+  const finalUrl = buildResolvedUrl(candidate.landingUrl || landingUrl, candidate.trackingParams);
+  return splitFinalUrl(finalUrl, trace.exitGeoInfo);
 }
 
 async function followAffiliateRedirectWithBrowser(
@@ -1155,7 +1294,7 @@ async function followAffiliateRedirectWithBrowser(
   countryCode?: string | null,
   refererUrl?: string | null,
   officialUrl?: string | null,
-) {
+) : Promise<RedirectTrace> {
   let browser: Browser;
   try {
     ensurePlaywrightBrowserPath();
@@ -1267,12 +1406,13 @@ async function followAffiliateRedirectWithBrowser(
       settledUrl,
       responseUrl,
     ].filter((value): value is string => Boolean(value));
-    const browserFinalUrl =
-      pickLandingCandidateFromChain(redirectChain, officialUrl) ??
-      preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
-
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
-    return splitFinalUrl(browserFinalUrl, exitGeoInfo);
+    return {
+      chain: redirectChain,
+      finalUrl: preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl),
+      bodyText: pageHtml,
+      exitGeoInfo,
+    };
   } finally {
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
@@ -1285,7 +1425,7 @@ async function followAffiliateRedirectWithRequest(
   refererUrl?: string | null,
   officialUrl?: string | null,
   maxDepth = 8,
-) {
+) : Promise<RedirectTrace> {
   const context = await request.newContext({
     proxy: proxy
       ? {
@@ -1337,13 +1477,16 @@ async function followAffiliateRedirectWithRequest(
         const nextUrl = location ? resolveRedirectLocation(location, finalUrl) : null;
 
         if (!nextUrl || nextUrl === currentUrl) {
-          const landingUrl =
-            pickLandingCandidateFromChain(
-              embeddedRedirectUrl ? [...chain, embeddedRedirectUrl] : chain,
-              officialUrl,
-            ) ?? embeddedRedirectUrl ??
-            finalUrl;
-          return splitFinalUrl(landingUrl);
+          const finalChain = dedupeUrlsPreserveOrder([
+            ...chain,
+            finalUrl,
+            embeddedRedirectUrl,
+          ]);
+          return {
+            chain: finalChain,
+            finalUrl: embeddedRedirectUrl ?? finalUrl,
+            bodyText: "",
+          };
         }
 
         record(finalUrl);
@@ -1354,13 +1497,16 @@ async function followAffiliateRedirectWithRequest(
 
       if (!contentType.includes("text/html")) {
         record(finalUrl);
-        const landingUrl =
-          pickLandingCandidateFromChain(
-            embeddedRedirectUrl ? [...chain, embeddedRedirectUrl] : chain,
-            officialUrl,
-          ) ?? embeddedRedirectUrl ??
-          finalUrl;
-        return splitFinalUrl(landingUrl);
+        const finalChain = dedupeUrlsPreserveOrder([
+          ...chain,
+          finalUrl,
+          embeddedRedirectUrl,
+        ]);
+        return {
+          chain: finalChain,
+          finalUrl: embeddedRedirectUrl ?? finalUrl,
+          bodyText: "",
+        };
       }
 
       const html = await response.text();
@@ -1372,8 +1518,16 @@ async function followAffiliateRedirectWithRequest(
 
       if (!nextUrl || nextUrl === finalUrl) {
         record(finalUrl);
-        const landingUrl = pickLandingCandidateFromChain(chain, officialUrl) ?? finalUrl;
-        return splitFinalUrl(landingUrl);
+        const finalChain = dedupeUrlsPreserveOrder([
+          ...chain,
+          finalUrl,
+          embeddedRedirectUrl,
+        ]);
+        return {
+          chain: finalChain,
+          finalUrl: embeddedRedirectUrl ?? finalUrl,
+          bodyText: html,
+        };
       }
 
       record(finalUrl);
@@ -1381,8 +1535,12 @@ async function followAffiliateRedirectWithRequest(
       currentUrl = nextUrl;
     }
 
-    const landingUrl = pickLandingCandidateFromChain(chain, officialUrl) ?? currentUrl;
-    return splitFinalUrl(landingUrl);
+    const finalChain = dedupeUrlsPreserveOrder([...chain, currentUrl]);
+    return {
+      chain: finalChain,
+      finalUrl: currentUrl,
+      bodyText: "",
+    };
   } finally {
     await context.dispose().catch(() => undefined);
   }
@@ -1444,127 +1602,36 @@ async function resolveTrackingUrl(link: AdLink) {
     throw buildError("请先填写联盟跟踪链接", 400);
   }
 
-  const embeddedFallback = buildEmbeddedRedirectFallback(link.tracking_url);
   const refererUrl = normalizeRefererUrl(link.referer_url, link.referer_sources);
-  let lastError: unknown = null;
 
   if (shouldUseIprroyalProxy(link)) {
-    for (let attempt = 1; attempt <= IPROYAL_RESOLVE_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const proxyConnection = getIprroyalProxyConnection();
-        if (!proxyConnection) {
-          throw buildError(
-            "IPRoyal proxy is selected but IPROYAL_PROXY_HOST / USER / PASSWORD_BASE is not configured",
-            500,
-          );
-        }
-
-        const requestResolved = await followAffiliateRedirectWithRequest(
-          link.tracking_url,
-          proxyConnection,
-          refererUrl,
-          link.official_url,
-        );
-
-        if (isResolvedUrlStrongEnough(requestResolved, link.tracking_url, link.official_url)) {
-          return requestResolved;
-        }
-
-        try {
-          const browserResolved = await followAffiliateRedirectWithBrowser(
-            link.tracking_url,
-            proxyConnection,
-            link.country_code,
-            refererUrl,
-            link.official_url,
-          );
-
-          return (
-            pickPreferredResolvedResult(
-              [browserResolved, requestResolved, embeddedFallback],
-              link.tracking_url,
-              link.official_url,
-            ) ?? browserResolved
-          );
-        } catch (browserError) {
-          lastError = browserError;
-          return (
-            pickPreferredResolvedResult(
-              [requestResolved, embeddedFallback],
-              link.tracking_url,
-              link.official_url,
-            ) ?? requestResolved
-          );
-        }
-      } catch (error) {
-        lastError = error;
-        if (attempt >= IPROYAL_RESOLVE_MAX_ATTEMPTS) {
-          break;
-        }
-      }
+    const proxyConnection = getIprroyalProxyConnection();
+    if (!proxyConnection) {
+      throw buildError(
+        "IPRoyal proxy is selected but IPROYAL_PROXY_HOST / USER / PASSWORD_BASE is not configured",
+        500,
+      );
     }
 
-    if (embeddedFallback) {
-      return embeddedFallback;
-    }
-
-    throw buildError(
-      `IPRoyal proxy retry failed after ${IPROYAL_RESOLVE_MAX_ATTEMPTS} attempts: ${toResolverErrorMessage(lastError)}`,
-      502,
+    const trace = await followAffiliateRedirectWithBrowser(
+      link.tracking_url,
+      proxyConnection,
+      link.country_code,
+      refererUrl,
+      link.official_url,
     );
+    return resolveResultFromTrace(trace, link.official_url);
   }
 
   if (!shouldUseKookeeyProxy(link)) {
-    try {
-      const requestResolved = await followAffiliateRedirectWithRequest(
-        link.tracking_url,
-        null,
-        refererUrl,
-        link.official_url,
-      );
-
-      if (isResolvedUrlStrongEnough(requestResolved, link.tracking_url, link.official_url)) {
-        return requestResolved;
-      }
-
-      try {
-        const browserResolved = await followAffiliateRedirectWithBrowser(
-          link.tracking_url,
-          null,
-          link.country_code,
-          refererUrl,
-          link.official_url,
-        );
-
-        return (
-          pickPreferredResolvedResult(
-            [browserResolved, requestResolved, embeddedFallback],
-            link.tracking_url,
-            link.official_url,
-          ) ?? browserResolved
-        );
-      } catch (browserError) {
-        lastError = browserError;
-        return (
-          pickPreferredResolvedResult(
-            [requestResolved, embeddedFallback],
-            link.tracking_url,
-            link.official_url,
-          ) ?? requestResolved
-        );
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (embeddedFallback) {
-      return embeddedFallback;
-    }
-
-    throw buildError(
-      `Browser resolution failed: ${toResolverErrorMessage(lastError)}`,
-      502,
+    const trace = await followAffiliateRedirectWithBrowser(
+      link.tracking_url,
+      null,
+      link.country_code,
+      refererUrl,
+      link.official_url,
     );
+    return resolveResultFromTrace(trace, link.official_url);
   }
 
   const apiUrl = getKookeeyPickApiUrl(link);
@@ -1585,32 +1652,22 @@ async function resolveTrackingUrl(link: AdLink) {
         );
       }
 
-      const browserResolved = await followAffiliateRedirectWithBrowser(
+      const trace = await followAffiliateRedirectWithBrowser(
         link.tracking_url,
         proxyConnection,
         link.country_code,
         refererUrl,
         link.official_url,
       );
-
-      return browserResolved;
+      return resolveResultFromTrace(trace, link.official_url);
     } catch (error) {
-      lastError = error;
       if (attempt >= KOOKEEY_RESOLVE_MAX_ATTEMPTS || !isRetryableKookeeyError(error)) {
-        break;
+        throw error;
       }
     }
   }
 
-  if (embeddedFallback) {
-    return embeddedFallback;
-  }
-
-  const detail = toResolverErrorMessage(lastError);
-  throw buildError(
-    `Kookeey proxy retry failed after ${KOOKEEY_RESOLVE_MAX_ATTEMPTS} attempts: ${detail}`,
-    502,
-  );
+  throw buildError("Kookeey proxy retry failed after configured attempts", 502);
 }
 
 function getEffectiveTargetUrl(link: AdLink) {
