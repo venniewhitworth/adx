@@ -1181,14 +1181,37 @@ function toTrackingQuery(pairs: Array<[string, string]>) {
   return pairs.map(([key, value]) => `${key}=${value}`).join("&");
 }
 
-function extractTrackingCandidateFromChain(
+function expandTraceChainCandidates(chain: string[], officialUrl?: string | null) {
+  const expanded: Array<string | null> = [];
+
+  for (const rawUrl of dedupeUrlsPreserveOrder(chain)) {
+    expanded.push(rawUrl);
+
+    const unwrappedUrl = unwrapEmbeddedRedirectUrl(rawUrl);
+    if (!unwrappedUrl || unwrappedUrl === rawUrl) {
+      continue;
+    }
+
+    if (
+      !officialUrl ||
+      landingDomainMatchesOfficialUrl(rawUrl, officialUrl) ||
+      landingDomainMatchesOfficialUrl(unwrappedUrl, officialUrl)
+    ) {
+      expanded.push(unwrappedUrl);
+    }
+  }
+
+  return dedupeUrlsPreserveOrder(expanded);
+}
+
+function findTrackingCandidateFromChain(
   chain: string[],
   officialUrl?: string | null,
-): TrackingCandidate {
+): TrackingCandidate | null {
   let bestStrong: TrackingCandidate | null = null;
   let bestWeak: TrackingCandidate | null = null;
 
-  for (const rawUrl of dedupeUrlsPreserveOrder(chain)) {
+  for (const rawUrl of expandTraceChainCandidates(chain, officialUrl)) {
     if (isKnownAffiliateTrackingUrl(rawUrl)) {
       continue;
     }
@@ -1235,7 +1258,14 @@ function extractTrackingCandidateFromChain(
     }
   }
 
-  const candidate = bestStrong ?? bestWeak;
+  return bestStrong ?? bestWeak;
+}
+
+function extractTrackingCandidateFromChain(
+  chain: string[],
+  officialUrl?: string | null,
+): TrackingCandidate {
+  const candidate = findTrackingCandidateFromChain(chain, officialUrl);
   if (!candidate) {
     throw buildError("未发现可用的 tracking 参数。", 502);
   }
@@ -1244,7 +1274,7 @@ function extractTrackingCandidateFromChain(
 }
 
 function pickLandingUrlFromTrace(trace: RedirectTrace, officialUrl?: string | null) {
-  const nonGatewayChain = dedupeUrlsPreserveOrder(trace.chain).filter(
+  const nonGatewayChain = expandTraceChainCandidates(trace.chain, officialUrl).filter(
     (url) => !isKnownAffiliateTrackingUrl(url),
   );
   const officialChain = officialUrl
@@ -1273,17 +1303,26 @@ function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | nul
     throw buildError("最终品牌官网域名与预期不一致。", 502);
   }
 
-  if (detectAuthOrChallenge(landingUrl, trace.bodyText)) {
+  const candidate = findTrackingCandidateFromChain(trace.chain, officialUrl);
+  const resolvedLandingUrl = candidate?.landingUrl || landingUrl;
+  const finalUrlLooksBlocked = detectAuthOrChallenge(trace.finalUrl, trace.bodyText);
+  const blockedOfficialPage =
+    !officialUrl || landingDomainMatchesOfficialUrl(trace.finalUrl, officialUrl);
+
+  if (finalUrlLooksBlocked && (!candidate || blockedOfficialPage)) {
     throw buildError("最终页面为登录页、验证码页或访问受限页面。", 502);
   }
 
-  assertNotGatewayDomain(landingUrl);
+  assertNotGatewayDomain(resolvedLandingUrl);
 
-  if (officialUrl && !landingDomainMatchesOfficialUrl(landingUrl, officialUrl)) {
+  if (officialUrl && !landingDomainMatchesOfficialUrl(resolvedLandingUrl, officialUrl)) {
     throw buildError("最终品牌官网域名与预期不一致。", 502);
   }
 
-  const candidate = extractTrackingCandidateFromChain(trace.chain, officialUrl);
+  if (!candidate) {
+    throw buildError("未发现可用的 tracking 参数。", 502);
+  }
+
   const finalUrl = buildResolvedUrl(candidate.landingUrl || landingUrl, candidate.trackingParams);
   return splitFinalUrl(finalUrl, trace.exitGeoInfo);
 }
@@ -1393,6 +1432,7 @@ async function followAffiliateRedirectWithBrowser(
   const page = await context.newPage();
   const navigationUrls: string[] = [];
   const navigationSeen = new Set<string>();
+  const failedNavigationUrls: string[] = [];
 
   const recordNavigationUrl = (value?: string | null) => {
     const normalized = normalizeBrowserUrl(value);
@@ -1410,6 +1450,16 @@ async function followAffiliateRedirectWithBrowser(
     }
   };
 
+  const recordFailedNavigationUrl = (value?: string | null) => {
+    const normalized = normalizeBrowserUrl(value);
+    if (!normalized || failedNavigationUrls.includes(normalized)) {
+      return;
+    }
+
+    failedNavigationUrls.push(normalized);
+    recordNavigationUrl(normalized);
+  };
+
   try {
     page.on("framenavigated", onFrameNavigated);
     page.on("response", (response) => {
@@ -1417,6 +1467,13 @@ async function followAffiliateRedirectWithBrowser(
       if (request.isNavigationRequest() && request.resourceType() === "document") {
         recordNavigationUrl(response.url());
       }
+    });
+    page.on("requestfailed", (request) => {
+      if (!request.isNavigationRequest() || request.resourceType() !== "document") {
+        return;
+      }
+
+      recordFailedNavigationUrl(request.url());
     });
 
     if (refererUrl) {
@@ -1461,8 +1518,10 @@ async function followAffiliateRedirectWithBrowser(
 
     const stableCapture = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
     stableCapture.candidates.forEach(recordNavigationUrl);
+    failedNavigationUrls.forEach(recordNavigationUrl);
     const redirectChain = [
       ...navigationUrls,
+      ...failedNavigationUrls,
       browserRedirectHint,
       browserRedirectHint ? unwrapEmbeddedRedirectUrl(browserRedirectHint) : null,
       ...stableCapture.candidates,
@@ -1472,9 +1531,17 @@ async function followAffiliateRedirectWithBrowser(
       responseUrl,
     ].filter((value): value is string => Boolean(value));
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
+    const preferredFailedOfficialUrl =
+      [...failedNavigationUrls]
+        .reverse()
+        .find((url) => !officialUrl || landingDomainMatchesOfficialUrl(url, officialUrl)) ?? null;
+    const resolvedFinalUrl =
+      preferredFailedOfficialUrl ||
+      preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
+
     return {
       chain: redirectChain,
-      finalUrl: preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl),
+      finalUrl: resolvedFinalUrl,
       bodyText: pageHtml,
       exitGeoInfo,
     };
