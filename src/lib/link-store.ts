@@ -1437,10 +1437,12 @@ function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | nul
   const candidate = findTrackingCandidateFromChain(trace.chain, officialUrl);
   const resolvedLandingUrl = candidate?.landingUrl || landingUrl;
   const finalUrlLooksBlocked = detectAuthOrChallenge(trace.finalUrl, trace.bodyText);
-  const blockedOfficialPage =
-    !officialUrl || landingDomainMatchesOfficialUrl(trace.finalUrl, officialUrl);
+  const resolvedMatchesOfficial = !officialUrl || landingDomainMatchesOfficialUrl(
+    resolvedLandingUrl,
+    officialUrl,
+  );
 
-  if (finalUrlLooksBlocked && (!candidate || blockedOfficialPage)) {
+  if (finalUrlLooksBlocked && !resolvedMatchesOfficial && !candidate) {
     throw buildError("最终页面为登录页、验证码页或访问受限页面。", 502);
   }
 
