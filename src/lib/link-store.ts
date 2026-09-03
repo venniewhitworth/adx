@@ -1124,8 +1124,28 @@ async function followAffiliateRedirectWithBrowser(
   });
 
   const page = await context.newPage();
+  const navigationUrls: string[] = [];
+  const navigationSeen = new Set<string>();
+
+  const recordNavigationUrl = (value?: string | null) => {
+    const normalized = normalizeBrowserUrl(value);
+    if (!normalized || navigationSeen.has(normalized)) {
+      return;
+    }
+
+    navigationSeen.add(normalized);
+    navigationUrls.push(normalized);
+  };
+
+  const onFrameNavigated = (frame: { url(): string }) => {
+    if (frame === page.mainFrame()) {
+      recordNavigationUrl(frame.url());
+    }
+  };
 
   try {
+    page.on("framenavigated", onFrameNavigated);
+
     if (refererUrl) {
       await page.setExtraHTTPHeaders({
         Referer: refererUrl,
@@ -1133,11 +1153,14 @@ async function followAffiliateRedirectWithBrowser(
     }
 
     const entryUrl = extractEmbeddedRedirectUrl(trackingUrl) ?? trackingUrl;
+    recordNavigationUrl(entryUrl);
     const initialResponse = await page.goto(entryUrl, {
       waitUntil: "domcontentloaded",
       timeout: 45000,
       referer: refererUrl ?? undefined,
     });
+    recordNavigationUrl(initialResponse?.url());
+    recordNavigationUrl(page.url());
 
     try {
       await page.waitForLoadState("networkidle", { timeout: 5000 });
@@ -1148,15 +1171,17 @@ async function followAffiliateRedirectWithBrowser(
     const responseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
     const settledUrl = normalizeBrowserUrl(page.url()) ?? responseUrl;
     const finalUrl = preserveLandingQuery(responseUrl, settledUrl, officialUrl);
+    recordNavigationUrl(finalUrl);
 
     if (!finalUrl || finalUrl === "about:blank" || finalUrl.startsWith("chrome-error://")) {
       throw buildError("Browser navigation through Kookeey proxy failed", 502);
     }
 
     const stableCapture = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
+    stableCapture.candidates.forEach(recordNavigationUrl);
     const browserFinalUrl =
       pickBestBrowserFinalUrl(
-        [responseUrl, settledUrl, finalUrl, stableCapture.finalUrl, ...stableCapture.candidates],
+        [responseUrl, settledUrl, finalUrl, stableCapture.finalUrl, ...stableCapture.candidates, ...navigationUrls],
         trackingUrl,
         officialUrl,
       ) ?? preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);

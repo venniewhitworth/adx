@@ -13,6 +13,8 @@ The dashboard workflow is now intentionally simple:
 5. Click `Save and Resolve`
 6. Copy the final URL or Google Ads suffix
 
+The resolver now keeps the browser navigation chain, then picks the most plausible landing URL from that chain and preserves its query string when it matches the official destination.
+
 The app now defaults to IPRoyal for proxy resolution and syncs Google Ads only at the campaign level.
 
 ## Before you deploy
