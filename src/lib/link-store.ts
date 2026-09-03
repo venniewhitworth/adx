@@ -1064,6 +1064,76 @@ function hasUsefulQueryParams(rawUrl: string) {
   return false;
 }
 
+function scoreResolvedUrlCandidate(
+  resolvedUrl: string,
+  trackingUrl: string,
+  officialUrl?: string | null,
+) {
+  let score = 0;
+
+  if (officialUrl && doesResolvedUrlMatchOfficialUrl(resolvedUrl, officialUrl)) {
+    score += 100;
+  }
+
+  if (!isAffiliateTrackingUrl(resolvedUrl, trackingUrl)) {
+    score += 40;
+  }
+
+  if (hasUsefulQueryParams(resolvedUrl)) {
+    score += 30;
+  }
+
+  try {
+    const url = new URL(resolvedUrl);
+    if (url.pathname && url.pathname !== "/") {
+      score += 10;
+    }
+  } catch {
+    /* ignore invalid URL */
+  }
+
+  return score;
+}
+
+function isResolvedUrlStrongEnough(
+  resolved: ResolveResult,
+  trackingUrl: string,
+  officialUrl?: string | null,
+) {
+  if (!resolved.finalUrl || isAffiliateTrackingUrl(resolved.finalUrl, trackingUrl)) {
+    return false;
+  }
+
+  if (officialUrl && !doesResolvedUrlMatchOfficialUrl(resolved.finalUrl, officialUrl)) {
+    return false;
+  }
+
+  return hasUsefulQueryParams(resolved.finalUrl);
+}
+
+function pickPreferredResolvedResult(
+  candidates: Array<ResolveResult | null | undefined>,
+  trackingUrl: string,
+  officialUrl?: string | null,
+) {
+  let bestCandidate: ResolveResult | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    if (!candidate?.finalUrl) {
+      continue;
+    }
+
+    const score = scoreResolvedUrlCandidate(candidate.finalUrl, trackingUrl, officialUrl);
+    if (score > bestScore) {
+      bestCandidate = candidate;
+      bestScore = score;
+    }
+  }
+
+  return bestCandidate;
+}
+
 function pickLandingCandidateFromChain(chain: string[], officialUrl?: string | null) {
   const urls = [...new Set(chain.map((value) => normalizeBrowserUrl(value)).filter((value): value is string => Boolean(value)))];
   let officialMatch: string | null = null;
@@ -1147,6 +1217,12 @@ async function followAffiliateRedirectWithBrowser(
 
   try {
     page.on("framenavigated", onFrameNavigated);
+    page.on("response", (response) => {
+      const request = response.request();
+      if (request.isNavigationRequest() && request.resourceType() === "document") {
+        recordNavigationUrl(response.url());
+      }
+    });
 
     if (refererUrl) {
       await page.setExtraHTTPHeaders({
@@ -1154,7 +1230,7 @@ async function followAffiliateRedirectWithBrowser(
       });
     }
 
-    const entryUrl = extractEmbeddedRedirectUrl(trackingUrl) ?? trackingUrl;
+    const entryUrl = trackingUrl;
     recordNavigationUrl(entryUrl);
     const initialResponse = await page.goto(entryUrl, {
       waitUntil: "domcontentloaded",
@@ -1170,6 +1246,15 @@ async function followAffiliateRedirectWithBrowser(
       /* some landing pages keep connections open */
     }
 
+    const pageHtml = await page.content().catch(() => "");
+    const browserRedirectHint = pickBrowserRedirectUrl(
+      normalizeBrowserUrl(page.url()) ?? entryUrl,
+      initialResponse?.url(),
+      pageHtml,
+    );
+    recordNavigationUrl(browserRedirectHint);
+    recordNavigationUrl(browserRedirectHint ? unwrapEmbeddedRedirectUrl(browserRedirectHint) : null);
+
     const responseUrl = normalizeBrowserUrl(initialResponse?.url()) ?? entryUrl;
     const settledUrl = normalizeBrowserUrl(page.url()) ?? responseUrl;
     const finalUrl = preserveLandingQuery(responseUrl, settledUrl, officialUrl);
@@ -1183,12 +1268,14 @@ async function followAffiliateRedirectWithBrowser(
     stableCapture.candidates.forEach(recordNavigationUrl);
     const redirectChain = [
       ...navigationUrls,
+      browserRedirectHint,
+      browserRedirectHint ? unwrapEmbeddedRedirectUrl(browserRedirectHint) : null,
       ...stableCapture.candidates,
       stableCapture.finalUrl,
       finalUrl,
       settledUrl,
       responseUrl,
-    ];
+    ].filter((value): value is string => Boolean(value));
     const browserFinalUrl =
       pickLandingCandidateFromChain(redirectChain, officialUrl) ??
       preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
@@ -1205,6 +1292,7 @@ async function followAffiliateRedirectWithRequest(
   trackingUrl: string,
   proxy: ProxyConnection | null,
   refererUrl?: string | null,
+  officialUrl?: string | null,
   maxDepth = 8,
 ) {
   const context = await request.newContext({
@@ -1224,12 +1312,23 @@ async function followAffiliateRedirectWithRequest(
   try {
     let currentUrl = trackingUrl;
     const visited = new Set<string>();
+    const chain: string[] = [];
+
+    const record = (value?: string | null) => {
+      const normalized = normalizeBrowserUrl(value);
+      if (!normalized || chain.includes(normalized)) {
+        return;
+      }
+
+      chain.push(normalized);
+    };
 
     for (let depth = 0; depth < maxDepth; depth += 1) {
       if (visited.has(currentUrl)) {
         throw buildError("检测到循环重定向", 502);
       }
       visited.add(currentUrl);
+      record(currentUrl);
 
       const response = await context.get(currentUrl, {
         maxRedirects: 0,
@@ -1239,42 +1338,60 @@ async function followAffiliateRedirectWithRequest(
       const status = response.status();
       const contentType = response.headers()["content-type"] || "";
       const finalUrl = response.url() || currentUrl;
+      const embeddedRedirectUrl =
+        extractEmbeddedRedirectUrl(finalUrl) ?? extractEmbeddedRedirectUrl(currentUrl);
 
       if (status >= 300 && status < 400) {
         const location = getResponseLocation(response);
         const nextUrl = location ? resolveRedirectLocation(location, finalUrl) : null;
 
         if (!nextUrl || nextUrl === currentUrl) {
-          return splitFinalUrl(finalUrl);
+          const landingUrl =
+            pickLandingCandidateFromChain(
+              embeddedRedirectUrl ? [...chain, embeddedRedirectUrl] : chain,
+              officialUrl,
+            ) ?? embeddedRedirectUrl ??
+            finalUrl;
+          return splitFinalUrl(landingUrl);
         }
 
-        if (isKnownAffiliateTrackingUrl(finalUrl) && !isKnownAffiliateTrackingUrl(nextUrl)) {
-          return splitFinalUrl(nextUrl);
-        }
-
+        record(finalUrl);
+        record(nextUrl);
         currentUrl = nextUrl;
         continue;
       }
 
       if (!contentType.includes("text/html")) {
-        return splitFinalUrl(finalUrl);
+        record(finalUrl);
+        const landingUrl =
+          pickLandingCandidateFromChain(
+            embeddedRedirectUrl ? [...chain, embeddedRedirectUrl] : chain,
+            officialUrl,
+          ) ?? embeddedRedirectUrl ??
+          finalUrl;
+        return splitFinalUrl(landingUrl);
       }
 
       const html = await response.text();
-      const nextUrl = extractHtmlRedirectUrl(html, finalUrl) ?? extractEmbeddedRedirectUrl(finalUrl);
+      const nextUrl =
+        extractHtmlRedirectUrl(html, finalUrl) ??
+        (isKnownAffiliateTrackingUrl(finalUrl) || isKnownAffiliateTrackingUrl(currentUrl)
+          ? extractEmbeddedRedirectUrl(finalUrl) ?? extractEmbeddedRedirectUrl(currentUrl)
+          : null);
 
       if (!nextUrl || nextUrl === finalUrl) {
-        return splitFinalUrl(finalUrl);
+        record(finalUrl);
+        const landingUrl = pickLandingCandidateFromChain(chain, officialUrl) ?? finalUrl;
+        return splitFinalUrl(landingUrl);
       }
 
-      if (isKnownAffiliateTrackingUrl(finalUrl) && !isKnownAffiliateTrackingUrl(nextUrl)) {
-        return splitFinalUrl(nextUrl);
-      }
-
+      record(finalUrl);
+      record(nextUrl);
       currentUrl = nextUrl;
     }
 
-    throw buildError("重定向次数过多", 502);
+    const landingUrl = pickLandingCandidateFromChain(chain, officialUrl) ?? currentUrl;
+    return splitFinalUrl(landingUrl);
   } finally {
     await context.dispose().catch(() => undefined);
   }
@@ -1317,7 +1434,7 @@ async function followAffiliateRedirect(
     }
 
     const html = await response.text();
-    const redirectUrl = extractHtmlRedirectUrl(html, finalUrl) ?? extractEmbeddedRedirectUrl(finalUrl);
+    const redirectUrl = extractHtmlRedirectUrl(html, finalUrl);
 
     if (!redirectUrl || redirectUrl === finalUrl) {
       // 没有检测到 HTML 跳转，当前就是最终页面
@@ -1351,13 +1468,43 @@ async function resolveTrackingUrl(link: AdLink) {
           );
         }
 
-        return await followAffiliateRedirectWithBrowser(
+        const requestResolved = await followAffiliateRedirectWithRequest(
           link.tracking_url,
           proxyConnection,
-          link.country_code,
           refererUrl,
           link.official_url,
         );
+
+        if (isResolvedUrlStrongEnough(requestResolved, link.tracking_url, link.official_url)) {
+          return requestResolved;
+        }
+
+        try {
+          const browserResolved = await followAffiliateRedirectWithBrowser(
+            link.tracking_url,
+            proxyConnection,
+            link.country_code,
+            refererUrl,
+            link.official_url,
+          );
+
+          return (
+            pickPreferredResolvedResult(
+              [browserResolved, requestResolved, embeddedFallback],
+              link.tracking_url,
+              link.official_url,
+            ) ?? browserResolved
+          );
+        } catch (browserError) {
+          lastError = browserError;
+          return (
+            pickPreferredResolvedResult(
+              [requestResolved, embeddedFallback],
+              link.tracking_url,
+              link.official_url,
+            ) ?? requestResolved
+          );
+        }
       } catch (error) {
         lastError = error;
         if (attempt >= IPROYAL_RESOLVE_MAX_ATTEMPTS) {
@@ -1378,13 +1525,43 @@ async function resolveTrackingUrl(link: AdLink) {
 
   if (!shouldUseKookeeyProxy(link)) {
     try {
-      return await followAffiliateRedirectWithBrowser(
+      const requestResolved = await followAffiliateRedirectWithRequest(
         link.tracking_url,
         null,
-        link.country_code,
         refererUrl,
         link.official_url,
       );
+
+      if (isResolvedUrlStrongEnough(requestResolved, link.tracking_url, link.official_url)) {
+        return requestResolved;
+      }
+
+      try {
+        const browserResolved = await followAffiliateRedirectWithBrowser(
+          link.tracking_url,
+          null,
+          link.country_code,
+          refererUrl,
+          link.official_url,
+        );
+
+        return (
+          pickPreferredResolvedResult(
+            [browserResolved, requestResolved, embeddedFallback],
+            link.tracking_url,
+            link.official_url,
+          ) ?? browserResolved
+        );
+      } catch (browserError) {
+        lastError = browserError;
+        return (
+          pickPreferredResolvedResult(
+            [requestResolved, embeddedFallback],
+            link.tracking_url,
+            link.official_url,
+          ) ?? requestResolved
+        );
+      }
     } catch (error) {
       lastError = error;
     }
