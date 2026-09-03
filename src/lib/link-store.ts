@@ -573,6 +573,68 @@ function alignResolvedUrlToOfficialUrl(resolvedUrl: string, officialUrl?: string
   return resolvedUrl;
 }
 
+function scoreOfficialUrlCandidate(rawUrl: string, officialUrl?: string | null) {
+  let score = 0;
+
+  try {
+    const url = new URL(rawUrl);
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const queryCount = countUsefulQueryParams(rawUrl);
+
+    if (officialUrl && landingDomainMatchesOfficialUrl(rawUrl, officialUrl)) {
+      score += 10_000;
+    }
+
+    if (url.protocol === "https:") {
+      score += 500;
+    } else if (url.protocol === "http:") {
+      score += 150;
+    }
+
+    if (pathSegments.length > 0) {
+      score += 200 + pathSegments.length * 25;
+    }
+
+    if (queryCount > 0) {
+      score += 300 + queryCount * 100;
+      score += Math.min(url.search.length, 800);
+    }
+
+    if (url.hash) {
+      score += 10;
+    }
+  } catch {
+    return 0;
+  }
+
+  return score;
+}
+
+function pickBestOfficialUrlCandidate(
+  chain: Array<string | null | undefined>,
+  officialUrl?: string | null,
+) {
+  let bestUrl: string | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const rawUrl of expandTraceChainCandidates(
+    chain.filter((value): value is string => Boolean(value)),
+    officialUrl,
+  )) {
+    if (officialUrl && !landingDomainMatchesOfficialUrl(rawUrl, officialUrl)) {
+      continue;
+    }
+
+    const score = scoreOfficialUrlCandidate(rawUrl, officialUrl);
+    if (score >= bestScore) {
+      bestScore = score;
+      bestUrl = rawUrl;
+    }
+  }
+
+  return bestUrl;
+}
+
 const embeddedRedirectParamNames = new Set([
   "url",
   "u",
@@ -1084,6 +1146,25 @@ function hasUsefulQueryParams(rawUrl: string) {
   return false;
 }
 
+function countUsefulQueryParams(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    let count = 0;
+
+    for (const [key, value] of url.searchParams.entries()) {
+      if (isRedirectPlaceholderParam(key) || !value.trim()) {
+        continue;
+      }
+
+      count += 1;
+    }
+
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 function hasMeaningfulLandingDetails(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
@@ -1322,31 +1403,29 @@ function buildResolvedUrl(landingUrl: string, trackingParams: string) {
 }
 
 function pickResolvedFinalUrl(
+  trace: RedirectTrace,
   landingUrl: string,
   candidate: TrackingCandidate | null,
   officialUrl?: string | null,
 ) {
-  const alignedLandingUrl = alignResolvedUrlToOfficialUrl(landingUrl, officialUrl);
-  if (hasUsefulQueryParams(alignedLandingUrl)) {
-    return alignedLandingUrl;
-  }
+  const selectedOfficialUrl =
+    pickBestOfficialUrlCandidate(
+      [trace.finalUrl, landingUrl, candidate?.landingUrl ?? null, ...trace.chain],
+      officialUrl,
+    ) ?? alignResolvedUrlToOfficialUrl(landingUrl, officialUrl);
 
-  const candidateLandingUrl = candidate?.landingUrl
-    ? alignResolvedUrlToOfficialUrl(candidate.landingUrl, officialUrl)
-    : null;
-
-  if (candidateLandingUrl && hasUsefulQueryParams(candidateLandingUrl)) {
-    return candidateLandingUrl;
+  if (hasUsefulQueryParams(selectedOfficialUrl)) {
+    return selectedOfficialUrl;
   }
 
   if (candidate?.trackingParams) {
     return alignResolvedUrlToOfficialUrl(
-      buildResolvedUrl(candidateLandingUrl || alignedLandingUrl, candidate.trackingParams),
+      buildResolvedUrl(selectedOfficialUrl, candidate.trackingParams),
       officialUrl,
     );
   }
 
-  return alignedLandingUrl;
+  return selectedOfficialUrl;
 }
 
 function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | null) {
@@ -1375,7 +1454,7 @@ function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | nul
     throw buildError("未发现可用的 tracking 参数。", 502);
   }
 
-  const finalUrl = pickResolvedFinalUrl(resolvedLandingUrl, candidate, officialUrl);
+  const finalUrl = pickResolvedFinalUrl(trace, resolvedLandingUrl, candidate, officialUrl);
   return splitFinalUrl(finalUrl, trace.exitGeoInfo);
 }
 
