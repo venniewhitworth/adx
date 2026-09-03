@@ -444,6 +444,18 @@ const knownAffiliateTrackingDomains = [
   "engagevantage.com",
 ];
 
+const officialRedirectPathMarkers = new Set([
+  "go",
+  "go.cgi",
+  "redirect",
+  "redir",
+  "click",
+  "out",
+  "track",
+  "trk",
+  "linkshare",
+]);
+
 function isKnownAffiliateTrackingHostname(hostname: string) {
   const normalizedHostname = hostname.toLowerCase();
 
@@ -455,6 +467,33 @@ function isKnownAffiliateTrackingHostname(hostname: string) {
 function isKnownAffiliateTrackingUrl(rawUrl: string) {
   try {
     return isKnownAffiliateTrackingHostname(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isOfficialRedirectLikeUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    const pathname = url.pathname.toLowerCase();
+    const segments = pathname.split("/").filter(Boolean);
+    const params = [...url.searchParams.keys()].map((item) => item.toLowerCase());
+
+    if (segments.some((segment) => officialRedirectPathMarkers.has(segment))) {
+      return true;
+    }
+
+    if (pathname.includes("/linkshare/")) {
+      return true;
+    }
+
+    if (pathname.endsWith(".cgi") && (pathname.includes("go") || pathname.includes("redirect"))) {
+      return true;
+    }
+
+    return params.some(
+      (param) => param.startsWith("__cf_chl") || param.startsWith("cf_chl"),
+    );
   } catch {
     return false;
   }
@@ -585,6 +624,10 @@ function scoreOfficialUrlCandidate(rawUrl: string, officialUrl?: string | null) 
       score += 10_000;
     }
 
+    if (isOfficialRedirectLikeUrl(rawUrl)) {
+      score -= 5_000;
+    }
+
     if (url.protocol === "https:") {
       score += 500;
     } else if (url.protocol === "http:") {
@@ -622,6 +665,10 @@ function pickBestOfficialUrlCandidate(
     officialUrl,
   )) {
     if (officialUrl && !landingDomainMatchesOfficialUrl(rawUrl, officialUrl)) {
+      continue;
+    }
+
+    if (isOfficialRedirectLikeUrl(rawUrl)) {
       continue;
     }
 
@@ -1168,6 +1215,9 @@ function countUsefulQueryParams(rawUrl: string) {
 function hasMeaningfulLandingDetails(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
+    if (isOfficialRedirectLikeUrl(rawUrl)) {
+      return false;
+    }
     return Boolean((url.pathname && url.pathname !== "/") || url.search);
   } catch {
     return false;
