@@ -549,6 +549,30 @@ function preserveLandingQuery(landingUrl: string, settledUrl: string, officialUr
   return settledUrl;
 }
 
+function alignResolvedUrlToOfficialUrl(resolvedUrl: string, officialUrl?: string | null) {
+  if (!officialUrl) {
+    return resolvedUrl;
+  }
+
+  try {
+    const resolved = new URL(resolvedUrl);
+    const official = new URL(officialUrl);
+
+    if (
+      resolved.protocol === "http:" &&
+      official.protocol === "https:" &&
+      landingDomainMatchesOfficialUrl(resolved.href, official.href)
+    ) {
+      resolved.protocol = "https:";
+      return resolved.toString();
+    }
+  } catch {
+    /* ignore invalid URLs */
+  }
+
+  return resolvedUrl;
+}
+
 const embeddedRedirectParamNames = new Set([
   "url",
   "u",
@@ -1297,6 +1321,34 @@ function buildResolvedUrl(landingUrl: string, trackingParams: string) {
   return url.toString();
 }
 
+function pickResolvedFinalUrl(
+  landingUrl: string,
+  candidate: TrackingCandidate | null,
+  officialUrl?: string | null,
+) {
+  const alignedLandingUrl = alignResolvedUrlToOfficialUrl(landingUrl, officialUrl);
+  if (hasUsefulQueryParams(alignedLandingUrl)) {
+    return alignedLandingUrl;
+  }
+
+  const candidateLandingUrl = candidate?.landingUrl
+    ? alignResolvedUrlToOfficialUrl(candidate.landingUrl, officialUrl)
+    : null;
+
+  if (candidateLandingUrl && hasUsefulQueryParams(candidateLandingUrl)) {
+    return candidateLandingUrl;
+  }
+
+  if (candidate?.trackingParams) {
+    return alignResolvedUrlToOfficialUrl(
+      buildResolvedUrl(candidateLandingUrl || alignedLandingUrl, candidate.trackingParams),
+      officialUrl,
+    );
+  }
+
+  return alignedLandingUrl;
+}
+
 function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | null) {
   const landingUrl = pickLandingUrlFromTrace(trace, officialUrl);
   if (!landingUrl) {
@@ -1323,7 +1375,7 @@ function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | nul
     throw buildError("未发现可用的 tracking 参数。", 502);
   }
 
-  const finalUrl = buildResolvedUrl(candidate.landingUrl || landingUrl, candidate.trackingParams);
+  const finalUrl = pickResolvedFinalUrl(resolvedLandingUrl, candidate, officialUrl);
   return splitFinalUrl(finalUrl, trace.exitGeoInfo);
 }
 
