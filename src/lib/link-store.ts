@@ -1415,7 +1415,7 @@ function pickResolvedFinalUrl(
     ) ?? alignResolvedUrlToOfficialUrl(landingUrl, officialUrl);
 
   if (hasUsefulQueryParams(selectedOfficialUrl)) {
-    return selectedOfficialUrl;
+    return alignResolvedUrlToOfficialUrl(selectedOfficialUrl, officialUrl);
   }
 
   if (candidate?.trackingParams) {
