@@ -1021,69 +1021,71 @@ async function waitForStablePageUrl(
   return { finalUrl: currentUrl, candidates };
 }
 
-function countUrlPathSegments(value: string) {
+function normalizeDomainFromUrl(value: string) {
   try {
-    return new URL(value).pathname.split("/").filter(Boolean).length;
+    return new URL(value).hostname.trim().toLowerCase().replace(/^www\./, "");
   } catch {
-    return 0;
+    return "";
   }
 }
 
-function scoreBrowserCandidate(value: string, trackingUrl: string, officialUrl?: string | null) {
-  let score = 0;
-
-  const normalizedValue = normalizeUrlForContainment(value);
-  const normalizedOfficial = officialUrl ? normalizeUrlForContainment(officialUrl) : "";
-
-  if (normalizedOfficial && normalizedValue.includes(normalizedOfficial)) {
-    score += 1000;
+function landingDomainMatchesOfficialUrl(landingUrl: string, officialUrl: string) {
+  const landingDomain = normalizeDomainFromUrl(landingUrl);
+  const officialDomain = normalizeDomainFromUrl(officialUrl);
+  if (!landingDomain || !officialDomain) {
+    return false;
   }
 
-  if (officialUrl && doesResolvedUrlMatchOfficialUrl(value, officialUrl)) {
-    score += 300;
-  }
-
-  if (!isAffiliateTrackingUrl(value, trackingUrl)) {
-    score += 200;
-  } else {
-    score -= 1000;
-  }
-
-  try {
-    const url = new URL(value);
-    if (url.search) {
-      score += 120 + Math.min(url.search.length, 80);
-    }
-    if (url.pathname && url.pathname !== "/") {
-      score += 80 + Math.min(countUrlPathSegments(value) * 8, 40);
-      score += Math.min(url.pathname.length, 80);
-    } else {
-      score += 10;
-    }
-    score += Math.min(value.length, 160) / 10;
-  } catch {
-    score += Math.min(value.length, 120) / 10;
-  }
-
-  return score;
+  return (
+    landingDomain === officialDomain ||
+    landingDomain.endsWith(`.${officialDomain}`) ||
+    officialDomain.endsWith(`.${landingDomain}`) ||
+    normalizeUrlForContainment(landingUrl).includes(normalizeUrlForContainment(officialUrl))
+  );
 }
 
-function pickBestBrowserFinalUrl(
-  candidates: string[],
-  trackingUrl: string,
-  officialUrl?: string | null,
-) {
-  const uniqueCandidates = [...new Set(candidates.map((value) => normalizeBrowserUrl(value)).filter((value): value is string => Boolean(value)))];
+function isRedirectPlaceholderParam(paramName: string) {
+  return embeddedRedirectParamNames.has(paramName.toLowerCase());
+}
 
-  if (!uniqueCandidates.length) {
-    return null;
+function hasUsefulQueryParams(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    for (const [key, value] of url.searchParams.entries()) {
+      if (isRedirectPlaceholderParam(key) || !value.trim()) {
+        continue;
+      }
+      return true;
+    }
+  } catch {
+    return false;
   }
 
-  return uniqueCandidates.reduce((best, candidate) => {
-    const bestScore = scoreBrowserCandidate(best, trackingUrl, officialUrl);
-    const candidateScore = scoreBrowserCandidate(candidate, trackingUrl, officialUrl);
-    return candidateScore > bestScore ? candidate : best;
-  });
+  return false;
+}
+
+function pickLandingCandidateFromChain(chain: string[], officialUrl?: string | null) {
+  const urls = [...new Set(chain.map((value) => normalizeBrowserUrl(value)).filter((value): value is string => Boolean(value)))];
+  let officialMatch: string | null = null;
+  let fallbackMatch: string | null = null;
+
+  for (const url of urls) {
+    if (isKnownAffiliateTrackingUrl(url)) {
+      continue;
+    }
+
+    if (!hasUsefulQueryParams(url)) {
+      continue;
+    }
+
+    fallbackMatch = url;
+
+    if (officialUrl && landingDomainMatchesOfficialUrl(url, officialUrl)) {
+      officialMatch = url;
+    }
+  }
+
+  return officialMatch ?? fallbackMatch;
 }
 
 async function followAffiliateRedirectWithBrowser(
@@ -1179,12 +1181,17 @@ async function followAffiliateRedirectWithBrowser(
 
     const stableCapture = await waitForStablePageUrl(page, finalUrl, 12000, 1500);
     stableCapture.candidates.forEach(recordNavigationUrl);
+    const redirectChain = [
+      ...navigationUrls,
+      ...stableCapture.candidates,
+      stableCapture.finalUrl,
+      finalUrl,
+      settledUrl,
+      responseUrl,
+    ];
     const browserFinalUrl =
-      pickBestBrowserFinalUrl(
-        [responseUrl, settledUrl, finalUrl, stableCapture.finalUrl, ...stableCapture.candidates, ...navigationUrls],
-        trackingUrl,
-        officialUrl,
-      ) ?? preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
+      pickLandingCandidateFromChain(redirectChain, officialUrl) ??
+      preserveLandingQuery(finalUrl, stableCapture.finalUrl, officialUrl);
 
     const exitGeoInfo = await detectExitGeoViaBrowser(page);
     return splitFinalUrl(browserFinalUrl, exitGeoInfo);
