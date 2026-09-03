@@ -421,35 +421,17 @@ function normalizeUrlForContainment(value: string) {
 }
 
 function doesResolvedUrlMatchOfficialUrl(resolvedUrl: string, officialUrl: string) {
-  const normalizedResolved = normalizeUrlForContainment(resolvedUrl);
-  const normalizedOfficial = normalizeUrlForContainment(officialUrl);
+  const resolvedHostname = toComparableHostname(resolvedUrl);
+  const officialHostname = toComparableHostname(officialUrl);
 
-  if (!normalizedResolved || !normalizedOfficial) {
+  if (!resolvedHostname || !officialHostname) {
     return false;
   }
 
-  if (normalizedResolved.includes(normalizedOfficial)) {
-    return true;
-  }
-
-  try {
-    const resolved = new URL(normalizedResolved);
-    const official = new URL(normalizedOfficial);
-
-    if (official.pathname !== "/" || official.search || official.hash) {
-      return false;
-    }
-
-    const resolvedHostname = resolved.hostname.trim().toLowerCase().replace(/^www\./, "");
-    const officialHostname = official.hostname.trim().toLowerCase().replace(/^www\./, "");
-
-    return (
-      hostnameMatchesOrIsSubdomain(resolvedHostname, officialHostname) ||
-      hostnameMatchesOrIsSubdomain(officialHostname, resolvedHostname)
-    );
-  } catch {
-    return false;
-  }
+  return (
+    hostnameMatchesOrIsSubdomain(resolvedHostname, officialHostname) ||
+    hostnameMatchesOrIsSubdomain(officialHostname, resolvedHostname)
+  );
 }
 
 const knownAffiliateTrackingDomains = [
