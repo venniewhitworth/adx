@@ -1288,6 +1288,71 @@ function resolveResultFromTrace(trace: RedirectTrace, officialUrl?: string | nul
   return splitFinalUrl(finalUrl, trace.exitGeoInfo);
 }
 
+function mergeRedirectTraces(...traces: Array<RedirectTrace | null | undefined>): RedirectTrace {
+  const chain = dedupeUrlsPreserveOrder(traces.flatMap((trace) => trace?.chain ?? []));
+  const finalTrace = [...traces].reverse().find((trace) => trace?.finalUrl) ?? null;
+  const bodyTrace = [...traces].reverse().find((trace) => trace?.bodyText?.trim()) ?? null;
+  const exitGeoTrace = [...traces].reverse().find(
+    (trace) =>
+      trace?.exitGeoInfo &&
+      (trace.exitGeoInfo.resolvedIp ||
+        trace.exitGeoInfo.resolvedCountryCode ||
+        trace.exitGeoInfo.resolvedCountryName),
+  ) ?? null;
+
+  if (!finalTrace?.finalUrl) {
+    throw buildError("解析失败，未拿到最终跳转链。", 502);
+  }
+
+  return {
+    chain,
+    finalUrl: finalTrace.finalUrl,
+    bodyText: bodyTrace?.bodyText ?? "",
+    exitGeoInfo: exitGeoTrace?.exitGeoInfo,
+  };
+}
+
+async function resolveTraceWithRequestAndBrowser(
+  trackingUrl: string,
+  proxy: ProxyConnection | null,
+  countryCode?: string | null,
+  refererUrl?: string | null,
+  officialUrl?: string | null,
+) {
+  let requestTrace: RedirectTrace | null = null;
+  let browserTrace: RedirectTrace | null = null;
+  let lastError: unknown = null;
+
+  try {
+    requestTrace = await followAffiliateRedirectWithRequest(
+      trackingUrl,
+      proxy,
+      refererUrl,
+      officialUrl,
+    );
+  } catch (error) {
+    lastError = error;
+  }
+
+  try {
+    browserTrace = await followAffiliateRedirectWithBrowser(
+      trackingUrl,
+      proxy,
+      countryCode,
+      refererUrl,
+      officialUrl,
+    );
+  } catch (error) {
+    lastError = error;
+  }
+
+  if (!requestTrace && !browserTrace) {
+    throw buildError(`解析失败：${toResolverErrorMessage(lastError)}`, 502);
+  }
+
+  return mergeRedirectTraces(requestTrace, browserTrace);
+}
+
 async function followAffiliateRedirectWithBrowser(
   trackingUrl: string,
   proxy: ProxyConnection | null,
@@ -1613,7 +1678,7 @@ async function resolveTrackingUrl(link: AdLink) {
       );
     }
 
-    const trace = await followAffiliateRedirectWithBrowser(
+    const trace = await resolveTraceWithRequestAndBrowser(
       link.tracking_url,
       proxyConnection,
       link.country_code,
@@ -1624,7 +1689,7 @@ async function resolveTrackingUrl(link: AdLink) {
   }
 
   if (!shouldUseKookeeyProxy(link)) {
-    const trace = await followAffiliateRedirectWithBrowser(
+    const trace = await resolveTraceWithRequestAndBrowser(
       link.tracking_url,
       null,
       link.country_code,
@@ -1652,7 +1717,7 @@ async function resolveTrackingUrl(link: AdLink) {
         );
       }
 
-      const trace = await followAffiliateRedirectWithBrowser(
+      const trace = await resolveTraceWithRequestAndBrowser(
         link.tracking_url,
         proxyConnection,
         link.country_code,
