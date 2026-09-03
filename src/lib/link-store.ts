@@ -1046,6 +1046,15 @@ function hasUsefulQueryParams(rawUrl: string) {
   return false;
 }
 
+function hasMeaningfulLandingDetails(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    return Boolean((url.pathname && url.pathname !== "/") || url.search);
+  } catch {
+    return false;
+  }
+}
+
 function scoreResolvedUrlCandidate(
   resolvedUrl: string,
   trackingUrl: string,
@@ -1061,7 +1070,7 @@ function scoreResolvedUrlCandidate(
     score += 40;
   }
 
-  if (hasUsefulQueryParams(resolvedUrl)) {
+  if (hasMeaningfulLandingDetails(resolvedUrl)) {
     score += 30;
   }
 
@@ -1090,7 +1099,7 @@ function isResolvedUrlStrongEnough(
     return false;
   }
 
-  return hasUsefulQueryParams(resolved.finalUrl);
+  return hasMeaningfulLandingDetails(resolved.finalUrl);
 }
 
 function pickPreferredResolvedResult(
@@ -1126,7 +1135,7 @@ function pickLandingCandidateFromChain(chain: string[], officialUrl?: string | n
       continue;
     }
 
-    if (!hasUsefulQueryParams(url)) {
+    if (!hasMeaningfulLandingDetails(url)) {
       continue;
     }
 
