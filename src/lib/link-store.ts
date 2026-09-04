@@ -720,12 +720,53 @@ function decodeRedirectCandidate(value: string) {
   return current.trim();
 }
 
+function extractLinkshareCampaignValue(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    const rawSiteId =
+      url.searchParams.get("siteID") ??
+      url.searchParams.get("siteId") ??
+      url.searchParams.get("siteid");
+    if (!rawSiteId) {
+      return null;
+    }
+
+    const decodedSiteId = decodeRedirectCandidate(rawSiteId);
+    const campaignValue = decodedSiteId.split("-").find((segment) => segment.trim())?.trim() ?? null;
+    return campaignValue || null;
+  } catch {
+    return null;
+  }
+}
+
+function applyOfficialRedirectUrlOverrides(parentUrl: URL, embeddedUrl: string) {
+  try {
+    const resolved = new URL(embeddedUrl, parentUrl.href);
+    const pathname = parentUrl.pathname.toLowerCase();
+    const utmSource = resolved.searchParams.get("utm_source")?.trim().toLowerCase();
+    const utmMedium = resolved.searchParams.get("utm_medium")?.trim().toLowerCase();
+    const linkshareCampaignValue = extractLinkshareCampaignValue(parentUrl.href);
+
+    if (
+      linkshareCampaignValue &&
+      (pathname.includes("linkshare") || utmSource === "ls" || utmMedium === "affiliate")
+    ) {
+      resolved.searchParams.set("utm_campaign", linkshareCampaignValue);
+    }
+
+    return resolved.href;
+  } catch {
+    return embeddedUrl;
+  }
+}
+
 function extractEmbeddedRedirectUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
     const tryResolveCandidate = (candidate: string) => {
       try {
-        return new URL(candidate, url.href).href;
+        const resolvedCandidate = new URL(candidate, url.href).href;
+        return applyOfficialRedirectUrlOverrides(url, resolvedCandidate);
       } catch {
         return null;
       }
