@@ -1458,6 +1458,16 @@ function pickResolvedFinalUrl(
   candidate: TrackingCandidate | null,
   officialUrl?: string | null,
 ) {
+  const browserFinalUrl = alignResolvedUrlToOfficialUrl(trace.finalUrl, officialUrl);
+  if (
+    browserFinalUrl &&
+    (!officialUrl || landingDomainMatchesOfficialUrl(browserFinalUrl, officialUrl)) &&
+    hasUsefulQueryParams(browserFinalUrl) &&
+    !isOfficialRedirectLikeUrl(browserFinalUrl)
+  ) {
+    return browserFinalUrl;
+  }
+
   const selectedOfficialUrl =
     pickBestOfficialUrlCandidate(
       [trace.finalUrl, landingUrl, candidate?.landingUrl ?? null, ...trace.chain],
