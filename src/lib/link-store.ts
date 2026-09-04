@@ -739,19 +739,55 @@ function extractLinkshareCampaignValue(rawUrl: string) {
   }
 }
 
+function buildOrderedUrlWithParams(
+  url: URL,
+  prioritizedEntries: Array<[string, string | null | undefined]>,
+) {
+  const prioritizedKeys = new Set(
+    prioritizedEntries.map(([key]) => key.toLowerCase()),
+  );
+  const nextParams = new URLSearchParams();
+
+  for (const [key, value] of prioritizedEntries) {
+    if (!value?.trim()) {
+      continue;
+    }
+
+    nextParams.append(key, value);
+  }
+
+  for (const [key, value] of url.searchParams.entries()) {
+    if (prioritizedKeys.has(key.toLowerCase()) || !value.trim()) {
+      continue;
+    }
+
+    nextParams.append(key, value);
+  }
+
+  url.search = nextParams.toString() ? `?${nextParams.toString()}` : "";
+  return url.href;
+}
+
 function applyOfficialRedirectUrlOverrides(parentUrl: URL, embeddedUrl: string) {
   try {
     const resolved = new URL(embeddedUrl, parentUrl.href);
     const pathname = parentUrl.pathname.toLowerCase();
-    const utmSource = resolved.searchParams.get("utm_source")?.trim().toLowerCase();
-    const utmMedium = resolved.searchParams.get("utm_medium")?.trim().toLowerCase();
+    const utmSourceValue = resolved.searchParams.get("utm_source")?.trim();
+    const utmMediumValue = resolved.searchParams.get("utm_medium")?.trim();
+    const utmSource = utmSourceValue?.toLowerCase();
+    const utmMedium = utmMediumValue?.toLowerCase();
     const linkshareCampaignValue = extractLinkshareCampaignValue(parentUrl.href);
 
     if (
       linkshareCampaignValue &&
       (pathname.includes("linkshare") || utmSource === "ls" || utmMedium === "affiliate")
     ) {
-      resolved.searchParams.set("utm_campaign", linkshareCampaignValue);
+      resolved.protocol = "https:";
+      return buildOrderedUrlWithParams(resolved, [
+        ["utm_campaign", linkshareCampaignValue],
+        ["utm_source", utmSourceValue],
+        ["utm_medium", utmMediumValue],
+      ]);
     }
 
     return resolved.href;
