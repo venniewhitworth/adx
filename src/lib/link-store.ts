@@ -1440,7 +1440,8 @@ function pickLandingUrlFromTrace(trace: RedirectTrace, officialUrl?: string | nu
     !officialUrl || landingDomainMatchesOfficialUrl(trace.finalUrl, officialUrl);
 
   return (
-    meaningfulChain.at(-1) ??
+    pickBestOfficialUrlCandidate(meaningfulChain, officialUrl) ??
+    pickBestOfficialUrlCandidate(officialChain, officialUrl) ??
     officialChain.at(-1) ??
     (finalUrlMatchesOfficial ? trace.finalUrl : null)
   );
@@ -1458,16 +1459,6 @@ function pickResolvedFinalUrl(
   candidate: TrackingCandidate | null,
   officialUrl?: string | null,
 ) {
-  const browserFinalUrl = alignResolvedUrlToOfficialUrl(trace.finalUrl, officialUrl);
-  if (
-    browserFinalUrl &&
-    (!officialUrl || landingDomainMatchesOfficialUrl(browserFinalUrl, officialUrl)) &&
-    hasUsefulQueryParams(browserFinalUrl) &&
-    !isOfficialRedirectLikeUrl(browserFinalUrl)
-  ) {
-    return browserFinalUrl;
-  }
-
   const selectedOfficialUrl =
     pickBestOfficialUrlCandidate(
       [trace.finalUrl, landingUrl, candidate?.landingUrl ?? null, ...trace.chain],
